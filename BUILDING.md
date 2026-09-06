@@ -61,6 +61,7 @@ With a host GCC installed and `out/` created:
 python3 scripts/check-touch-render.py
 python3 scripts/check-program-cache.py
 python3 scripts/check-program-binding.py
+python3 scripts/check-placement.py
 ```
 
 These compile the production functions with minimal system adapters. They
@@ -68,6 +69,20 @@ check multi-contact IDs, read failures, idle sampling recovery, IME release
 barriers, projection upload caching and program lifetime. They use no graphics,
 audio, emulator or desktop control. The other `check-*.py` scripts have
 additional local SDK/game-data prerequisites documented in their source.
+
+For the RC4 placement crash regression, an additional bounded instruction check
+uses the exact locally supplied game library and the built unstripped Vita ELF:
+
+```sh
+python3 -m pip install pyelftools unicorn
+python3 scripts/check-placement-arm.py --game-lib /path/to/libPVZ2.so --loader-elf build-vita-direct/pvz2_loader
+```
+
+It reproduces the original fallback and invalid delete argument, then verifies
+the compiled ARM/Thumb bridge, production marker and fingerprint rejection.
+It runs only the isolated routines; it does not boot the game or Vita3K.
+See [the crash analysis](docs/zomboss-crash.md). Neither this check nor CI
+replaces a physical Vita replay of the Zomboss encounter.
 
 Hardware checks remain necessary: leave a menu idle, resume touch, overlap two
 fingers, play a busy wave, save and relaunch. Return `userdata/loader.log`.

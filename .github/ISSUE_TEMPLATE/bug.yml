@@ -1,0 +1,41 @@
+name: Crash or gameplay problem
+description: Report a problem from a physical Vita test.
+title: "[Vita] "
+body:
+  - type: input
+    id: build
+    attributes:
+      label: Build ID
+      description: From the BUILD line in userdata/loader.log.
+      placeholder: 452-v1-rc4
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: World, level or menu
+      placeholder: Ancient Egypt, Zomboss
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: What happened?
+      description: Include what you did immediately beforehand, whether it repeats from the same progress, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Vita setup
+      description: Console model, firmware and any enabled performance plugins or clock changes.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and crash dump
+      description: Preserve userdata/loader.log before relaunching. Attach the matching log and, for a crash, the matching psp2dmp through the private testing channel. Do not upload the game library, OBB or account credentials.
+  - type: textarea
+    id: performance
+    attributes:
+      label: Performance details, if relevant
+      description: Approximate FPS, how long the game had been running, and whether the slowdown begins during loading, animation or a crowded wave.

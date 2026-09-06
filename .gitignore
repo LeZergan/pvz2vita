@@ -13,6 +13,8 @@
 *.log
 *.log.*
 *.dmp
+*.psp2dmp
+*.elf
 *.pyc
 __pycache__/
 .env

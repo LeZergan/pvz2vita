@@ -19,3 +19,4 @@ jobs:
       - run: python scripts/check-touch-render.py
       - run: python scripts/check-program-cache.py
       - run: python scripts/check-program-binding.py
+      - run: python scripts/check-placement.py

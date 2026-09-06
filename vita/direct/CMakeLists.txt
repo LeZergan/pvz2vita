@@ -97,6 +97,7 @@ add_executable(${CMAKE_PROJECT_NAME}
                source/utils/glutil.c
                source/utils/launch_state.c
                source/utils/loading_screen.c
+               source/utils/placement_452.c
                source/utils/logger.c
                source/utils/settings.c
                source/utils/telemetry.c
