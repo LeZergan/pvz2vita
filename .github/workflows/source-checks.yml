@@ -1,0 +1,21 @@
+name: Source checks
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install Pillow
+      - run: mkdir -p out
+      - run: python scripts/prepare-livearea.py
+      - run: python scripts/check-touch-render.py
+      - run: python scripts/check-program-cache.py
+      - run: python scripts/check-program-binding.py

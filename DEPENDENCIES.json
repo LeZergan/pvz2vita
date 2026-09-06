@@ -1,0 +1,34 @@
+{
+  "toolchain": "arm-vita-eabi GCC 10.3.0 softfp",
+  "vitagl_source_commit": "bbbeab84bc029a273b3f27d11c5afd9f1dc4184d",
+  "libraries": {
+    "libvitaGL.a": {
+      "bytes": 6294968,
+      "sha256": "ea9110d0941eb961e09da90f4be034f0aafeaae83d8ace03b69a889fe0f5c913"
+    },
+    "libvitashark.a": {
+      "bytes": 23132,
+      "sha256": "64c3896843644182627bc4d923ff8a6e257b033bb818354f036050590dc9b774"
+    },
+    "libSceShaccCgExt.a": {
+      "bytes": 60514,
+      "sha256": "5cde27b827a61e5abc52dced1e843ee70f7bb6129f681e9a2e835d3fed4cfe92"
+    },
+    "libmathneon.a": {
+      "bytes": 44674,
+      "sha256": "bb2ef765b6309c2b518afa58a90da0e9eb2739bba95f9cdeaeef4215e94c72d1"
+    },
+    "libpthread.a": {
+      "bytes": 147824,
+      "sha256": "e0f2c8c536f987761c7240e125fbf87f33e4f2ab48e1a48d8e84c087a5b1e059"
+    },
+    "libOpenSLES.a": {
+      "bytes": 124532,
+      "sha256": "22c7121e37712cf9c6e0e702f21d34eaab00a9493fa1af38e7396ce79968d47e"
+    },
+    "libtaihen_stub.a": {
+      "bytes": 19892,
+      "sha256": "e34feb8e389d4edfb48cb35d1c234356d666337a68259626caaadc34522b39d2"
+    }
+  }
+}
