@@ -12,7 +12,7 @@
   `bbbeab84bc029a273b3f27d11c5afd9f1dc4184d`. The build expects the normal
   `vglInitExtended` resolution-fallback return convention and the exported
   `gxm_context` and `gxm_color_surfaces_addr` symbols. See
-  `DEPENDENCIES.json` for hashes of the libraries used in the current build.
+  [DEPENDENCIES.json](DEPENDENCIES.json) for hashes of the libraries used in the current build.
   Those hashes record the tested binaries; they do not establish reproducible
   rebuild flags for every externally installed dependency.
 
@@ -90,11 +90,11 @@ python3 scripts/check-placement-arm.py --game-lib /path/to/libPVZ2.so --loader-e
 It reproduces the original fallback and invalid delete argument, then verifies
 the compiled ARM/Thumb bridge, production marker and fingerprint rejection.
 It runs only the isolated routines; it does not boot the game or Vita3K.
-See [the crash analysis](docs/zomboss-crash.md). Neither this check nor CI
+See [the crash analysis](zomboss-crash.md). Neither this check nor CI
 replaces a physical Vita replay of the Zomboss encounter.
 
 Hardware checks remain necessary: leave a menu idle, resume touch, overlap two
 fingers, play a busy wave, save and relaunch. Return `userdata/loader.log`.
 Touch statistics and `mat4_skipped` are included in the bounded frame reports.
-See [the private testing guide](docs/private-testing.md) for the current device
+See [the private testing guide](private-testing.md) for the current device
 baseline and the short tester checklist.

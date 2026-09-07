@@ -7,7 +7,7 @@ body:
     attributes:
       label: Build ID
       description: From the BUILD line in userdata/loader.log.
-      placeholder: 452-v1-rc5
+      placeholder: 452-v1-rc6
     validations:
       required: true
   - type: input

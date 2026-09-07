@@ -40,4 +40,4 @@ The port-specific implementation and documentation are **fully vibecoded** throu
 OpenAI Codex, directed and tested by LeZergan. Original game and community code
 retain their authorship. Thanks to PopCap / EA, TheFloW, Rinnegatamante,
 Volodymyr Atamanenko, GrapheneCt, VitaSDK and the other contributors listed in
-[Credits](../README.md#credits) and [THIRD_PARTY.md](../THIRD_PARTY.md).
+[Credits](../README.md#credits) and [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).

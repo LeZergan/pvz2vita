@@ -1,76 +1,69 @@
 > [!CAUTION]
-> ## FULLY VIBECODED — VITA PORT WORK WRITTEN WITH AI
+> ## WARNING: THIS PORT WAS WRITTEN WITH AI
 >
-> **The port-specific implementation and documentation were written with AI
-> coding assistants through OpenAI Codex**, with **LeZergan** directing development
-> and testing on real hardware. The original game and community libraries retain
-> their own authorship and licenses. This project has not had a complete playthrough.
-
-<p align="center">
-  <img src="livearea/sce_sys/icon0.png" width="128" height="128" alt="PvZ2 Vita icon">
-</p>
+> **The port-specific code and this documentation were generated with OpenAI Codex.
+> Fully vibecoded, directed and tested by LeZergan.**
+>
+> Inherited community code and the original game retain their own authorship and
+> licenses. The port has not had a complete playthrough. Expect unexpected bugs.
 
 # Plants vs. Zombies 2 — PS Vita
 
-Defend your lawn through time, now on PlayStation Vita.
+Unofficial PS Vita loader for the Android 4.5.2 ROW build of *Plants vs. Zombies 2*.
 
-Unofficial native Vita port of the Android **4.5.2 ROW / version 147** game,
-with touchscreen play, Vita keyboard entry and local saves.
-
-[Setup](#setup) — [Report a problem](../../issues/new/choose) —
-[v1 release notes](docs/release-notes-v1.md) — [Build](BUILDING.md) — [Credits](#credits)
+[Setup](#setup) — [Report a problem](../../issues/new?template=bug-report.yml)
 
 | | |
 | :-- | :-- |
-| Loader | **v1 release candidate 6** · `452-v1-rc6` |
-| Supported Android set | **4.5.2 ROW**, version **147**, ARMv7 |
-| Game files | `ux0:data/pvz2/` |
-| Saves, settings, logs and caches | `ux0:data/pvz2/userdata/` |
-| Availability | **Private testing; no GitHub release published** |
-| Source license | [MIT](vita/direct/LICENSE), with retained third-party notices |
+| Loader | PvZ2 v1 RC6 (`452-v1-rc6`) |
+| Supported Android set | 4.5.2 ROW, version 147, ARMv7 |
+| Data path | `ux0:data/pvz2` |
+| Licence | [MIT](LICENSE), with third-party notices |
 
-No Android game library, game archive or save data is included in the source
-repository. Supply your own matching game files.
+No Android game files are included. You must supply your own matching
+`libPVZ2.so` and main OBB.
 
 ## Current release status
 
-RC6 is prepared for private testing. Boot, menus and gameplay have been exercised
-on Vita in earlier builds. This candidate adds parallel texture preparation and
-fixes a texture-unit tracking bug that could apply another texture's alpha,
-size or failed-allocation flags during loading.
+RC6 is a private test candidate. No public download is available yet.
 
-- Large texture conversions now share actual pixel work between the caller and
-  dedicated workers on cores 1–2. An already-unlocked fourth core is detected
-  automatically. Alpha conversion and reduction use one pass and a smaller buffer.
-- The new LiveArea design, touch recovery, keyboard integration, save migration
-  and Ancient Egypt Zomboss placement crash fix are retained.
-- **60 FPS is the target; demanding menus, busy waves and first-time shader
-  compilation can still run below it.** The native game update/render path
-  remains sequential. Full-world completion and long sessions remain under test.
+- **Install `pvz2-vita-latest.vpk` over the previous build.** Keep your game files
+  and saves. No data rebuild is needed.
+- **The latest changes still need a Vita replay.** RC6 adds parallel texture
+  preparation and fixes texture tracking during loading. Earlier builds reached
+  gameplay on hardware; RC6's loading-flower flicker and performance changes
+  have passed source checks but need a device comparison.
 
-The new CPU and texture checks pass and the Vita VPK builds. RC6's loading-flower
-appearance and performance improvement still need a physical Vita comparison.
-See [private testing](docs/private-testing.md) for the device evidence and test route.
+Changes are listed in [the v1 notes](docs/release-notes-v1.md).
 
 ## Requirements
 
+Install the following on a homebrew-enabled Vita before the loader:
+
 | Component | Location | Notes |
 | :-- | :-- | :-- |
-| Homebrew-enabled PS Vita | — | Required |
-| [VitaShell](https://github.com/TheOfficialFloW/VitaShell/releases) | — | Install the VPK and copy the data |
-| [kubridge](https://github.com/TheOfficialFloW/kubridge) | `*KERNEL` in `ur0:tai/config.txt` | Reboot after installing |
+| [VitaShell](https://github.com/TheOfficialFloW/VitaShell/releases) | — | Used to install the VPK and copy files |
+| [kubridge](https://github.com/TheOfficialFloW/kubridge) | `*KERNEL` | Required; reboot after installing |
 | `libshacccg.suprx` | `ur0:data/` or `ur0:data/external/` | [ShaRKBR33D](https://github.com/Rinnegatamante/ShaRKBR33D) can install it |
-| Matching game files | `ux0:data/pvz2/` | Your own 4.5.2 ROW library and version-147 OBB |
 
-Boot messages identify missing files, runtime dependencies and an unwritable save
-folder. [Exact supported sizes and hashes](BUILDING.md#supply-the-matching-archive-locally)
-are documented; other versions and regional builds are not interchangeable.
+Use the **4.5.2 ROW / version 147** game files. Other versions and regional builds
+are not interchangeable. [Supported file sizes and hashes](docs/BUILDING.md#supply-the-matching-archive-locally)
+are documented. Boot errors explain missing files, dependencies and save-folder problems.
 
 ## Setup
 
-1. Copy `libPVZ2.so` and your OBB into `ux0:data/pvz2/`, naming the OBB `game.obb`.
-2. Install the supplied `pvz2-vita-latest.vpk` with VitaShell.
-3. Launch **Plants vs Zombies 2** from LiveArea.
+### 1. Install the loader
+
+Install `pvz2-vita-latest.vpk` with VitaShell.
+
+### 2. Prepare the data folder
+
+Put your `libPVZ2.so` and main OBB in a folder named `pvz2`. Rename the OBB
+to `game.obb`. A prepared tester pack already contains this folder.
+
+### 3. Copy the data to the Vita
+
+Copy the `pvz2` folder into `ux0:data/`. The result must contain:
 
 ```text
 ux0:data/pvz2/
@@ -79,86 +72,103 @@ ux0:data/pvz2/
 └── userdata/       ← created automatically
 ```
 
-For a prepared tester pack, copy its `pvz2` folder directly into `ux0:data/`.
-Avoid nesting a second `pvz2` folder. The older name
-`main.147.com.ea.game.pvz2_row.obb` is also accepted.
+Launch **Plants vs Zombies 2** from LiveArea. Do not nest a second `pvz2` folder
+inside the first. The older `main.147.com.ea.game.pvz2_row.obb` name is also accepted.
 
-**Updating:** install the new VPK over the old version. Keep both game files and
-`userdata/`. No save reset, marker file or cache deletion is required for RC6.
+### Updating later
 
-## Controls and saves
-
-Use the touchscreen to navigate and play. Tap a text field for the Vita keyboard;
-confirm replaces its value, cancel keeps it. Game character restrictions still
-apply. **Circle** goes back, **Start** opens the menu and **Square** deletes text.
-
-Back up **`ux0:data/pvz2/userdata/`** to preserve progress. Saves, settings and
-generated files stay together there. Older save locations migrate automatically;
-conflicting copies are preserved and reported.
+Install the new VPK over the old version. Keep both game files and `userdata/`.
+Back up `userdata/` to preserve your progress.
 
 ## Sending a log
 
-Preserve logs **before launching again after a failure**. Send
-`ux0:data/pvz2/userdata/loader.log` and its previous copy if present. Include
-`runtime.log`, `jni.log` and the matching `psp2core-…-eboot.bin.psp2dmp` if available.
+1. Play until the problem happens.
+2. Close the game from LiveArea if it is still running.
+3. Do not launch it again yet. `loader.log` is reset at the start of each launch.
+4. Copy `ux0:data/pvz2/userdata/loader.log` off the Vita using VitaShell.
+5. Attach it to a [bug report](../../issues/new?template=bug-report.yml).
 
-Each port log is capped at **2 MiB plus one previous copy**. Vita core dumps are
-separate system files. Send dumps through the private testing channel because
-they can contain game state.
+Send the whole file. Include `runtime.log`, `jni.log` and a previous log copy if
+available. Each port log is capped at **2 MiB plus one previous copy**.
+
+For a crash, preserve the matching `psp2core-…-eboot.bin.psp2dmp` too. Core dumps
+are separate system files and can contain game state; send them through the
+private testing channel.
 
 ## Reporting problems
 
-[Open a report](../../issues/new/choose) with the build ID, world/level, the action
-that triggered the issue and whether it repeats from the same save. For the
-loading flower, mention whether the flash occurs only on first entry or repeats
-on every visit. For performance, include the scene and whether zombies were active.
-Do not attach the proprietary library or game archive to an issue.
+Please report freezes, input problems, lost progress, broken graphics, audio
+stutter and severe performance drops as well as crashes.
 
-## Performance and CPU cores
+Use the [bug report form](../../issues/new?template=bug-report.yml). Include:
 
-The port uses persistent resource/shader caches, reduced redundant graphics work,
-bounded texture memory and parallel CPU texture preparation. Workers sleep when
-idle. Graphics calls stay on the rendering thread.
+- the build ID and exact world, level or menu
+- what happened, and what you expected instead
+- whether it happens every time and how long the game had been running
+- your Vita model, firmware and any performance plugins or clock changes
 
-Normal hardware provides three application cores. If
-[CapUnlocker](https://github.com/GrapheneCt/CapUnlocker) is already installed,
-RC6 verifies availability of the fourth core and uses it too; the plugin is optional.
-The loader does not install it. A busy main core can remain the limit even while
-workers are active. [CPU implementation and validation](docs/cpu-textures-rc6.md)
-describe what has been moved and how device logs measure it.
+Never upload the proprietary game library, APKs, OBBs or saves containing private information.
+
+## Controls and saves
+
+Use the touchscreen to navigate and play. **Circle** goes back, **Start** opens
+the menu and **Square** deletes text. Tap a text field to open the Vita keyboard;
+confirm replaces the field, cancel keeps it. The game's character rules still apply.
+
+Saves, settings, logs and caches live in `ux0:data/pvz2/userdata/`. Older save
+locations migrate automatically; conflicting copies are preserved and reported.
+
+## Optional performance plugins
+
+[CapUnlocker](https://github.com/GrapheneCt/CapUnlocker) exposes the reserved fourth
+core. RC6 detects it automatically if installed. The loader runs without it and
+uses the three normal application cores. No extra marker file is required.
+
+## Known limitations
+
+- First-time shader compilation can stall new scenes.
+- Demanding menus and crowded waves can fall below the 60 FPS target.
+- The native game update/render path remains limited by its main thread, even
+  while workers prepare textures on other cores.
+- Full-world completion and long sessions still need broader hardware coverage.
+
+See [the private testing guide](docs/private-testing.md) for the current evidence
+and the short test route.
 
 ## Building from source
 
-See [BUILDING.md](BUILDING.md) for the softfp VitaSDK, dependency fingerprints and
-build commands. `vita/direct/` is the active target. Small source checks run in
-GitHub Actions; the workflow does not publish a release or replace Vita testing.
+The loader requires the softfp VitaSDK and the libraries listed in
+[the build guide](docs/BUILDING.md). A hard-float SDK is rejected.
+
+```powershell
+.\scripts\build-vita.ps1 -SoftfpVitaSdk C:/tools/vitasdk -GameObb D:/game-files/game.obb
+```
+
+The output is `out/pvz2-vita-latest.vpk`. VPKs, extracted game data and proprietary
+Android files are excluded from source control.
+
+## Legal
+
+No Android executable, library, OBB or gameplay archive is included or linked.
+This is an unofficial fan project, unaffiliated with PopCap Games or Electronic
+Arts. Game names, artwork and trademarks belong to their respective owners.
 
 ## Credits
 
-- **LiveArea package** — assets credited to **standard republic** and port to
-  **KingTorro** in the supplied layout; those credits are preserved on the LiveArea.
-- **LeZergan** — project direction, Vita testing and port presentation.
-- **OpenAI Codex / AI coding assistants** — port-specific implementation,
-  debugging and documentation under LeZergan's direction: fully vibecoded.
-- **Andy “TheFloW” Nguyen** — Android `.so` loader groundwork, so_util, fios and kubridge.
-- **Rinnegatamante** — vitaGL, vitaShaRK, math-neon and Vita porting groundwork.
-- **Volodymyr Atamanenko** — soloader-boilerplate and FalsoJNI.
-- **GrapheneCt** and the other contributors named in the retained source notices
-  — shared Vita runtime groundwork.
-- **OptiJuegos / PvZ2Native** — the exact 4.5.2 lifecycle and input behavior reference.
-- **VitaSDK contributors**, the **miniz authors**, **Brad Conte** (SHA-1) and
-  **Michael G Schwern** (time conversion) — tools and supporting code.
-- **PopCap Games and Electronic Arts** — Plants vs. Zombies 2 and its game assets.
+- LeZergan — project direction and real Vita testing; OpenAI Codex — AI-generated port work
+- standard republic — LiveArea assets; KingTorro — port credit in the supplied layout
+- Andy "TheFloW" Nguyen — `.so` loader groundwork, so_util, fios and kubridge
+- Rinnegatamante — vitaGL, vitaShaRK and math-neon
+- Volodymyr Atamanenko — soloader-boilerplate and FalsoJNI
+- GrapheneCt — shared Vita runtime groundwork
+- OptiJuegos / PvZ2Native — 4.5.2 lifecycle and input behavior reference
+- Brad Conte — SHA-1; Michael G Schwern — time conversion; the miniz authors and VitaSDK team
+- PopCap Games and Electronic Arts — game and IP; not affiliated
 
-See [THIRD_PARTY.md](THIRD_PARTY.md) for source origins and license notices.
-Community contributions retain their authorship; the AI credit does not replace it.
+Full attributions are in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
-## Legal and licensing
+## Licence
 
-This is an unofficial fan project, unaffiliated with PopCap Games or Electronic
-Arts. Game names, artwork and trademarks belong to their respective owners.
-No proprietary game library or gameplay archive is distributed in this repository.
-
-The loader's [MIT license](vita/direct/LICENSE) and per-file notices are retained.
-Dependencies have their own licenses, including vitaGL's LGPL terms; game data
-and branded artwork are not relicensed by the port's source license.
+Loader source is licensed under the [MIT License](LICENSE). Inherited and
+third-party components retain their own notices. Game data and branded artwork
+are not relicensed by the port's source license.
