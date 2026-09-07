@@ -168,21 +168,16 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
 vita_create_self(eboot.bin ${CMAKE_PROJECT_NAME} UNSAFE)
 
-if (EXISTS "${CMAKE_SOURCE_DIR}/extras/livearea")
+if (EXISTS "${CMAKE_SOURCE_DIR}/extras/livearea/files.cmake")
+  include("${CMAKE_SOURCE_DIR}/extras/livearea/files.cmake")
   vita_create_vpk(${VITA_VPKNAME}.vpk ${VITA_TITLEID} eboot.bin
                   VERSION ${VITA_VERSION}
                   NAME ${VITA_APP_NAME}
-                  FILE ${CMAKE_SOURCE_DIR}/extras/livearea/icon0.png sce_sys/icon0.png
-                  FILE ${CMAKE_SOURCE_DIR}/extras/livearea/pic0.png sce_sys/pic0.png
-                  FILE ${CMAKE_SOURCE_DIR}/extras/livearea/bg0.png sce_sys/livearea/contents/bg0.png
-                  FILE ${CMAKE_SOURCE_DIR}/extras/livearea/startup.png sce_sys/livearea/contents/startup.png
-                  FILE ${CMAKE_SOURCE_DIR}/extras/livearea/template.xml sce_sys/livearea/contents/template.xml
+                  FILE ${PVZ2_LIVEAREA_FILES}
                   # Bionic /dev/urandom is translated to app0:/urandom by the
                   # direct loader.  PvZ2 4.5.2 constructor 944 requires it.
                   FILE ${CMAKE_SOURCE_DIR}/extras/urandom urandom
                   FILE ${CMAKE_SOURCE_DIR}/extras/rsb452.idx rsb452.idx)
 else()
-  vita_create_vpk(${VITA_VPKNAME}.vpk ${VITA_TITLEID} eboot.bin
-                  VERSION ${VITA_VERSION}
-                  NAME ${VITA_APP_NAME})
+  message(FATAL_ERROR "LiveArea package is missing. Run scripts/prepare-livearea.py before configuring the Vita target.")
 endif()

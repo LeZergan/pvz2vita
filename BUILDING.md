@@ -35,6 +35,11 @@ The game library is required on the Vita, but is not needed to compile the port.
 
 The script prepares LiveArea PNGs, generates the resource index, configures the
 active CMake target and copies the resulting VPK to `out/pvz2-vita-latest.vpk`.
+LiveArea preparation reads the supplied XML and supports the original `a1`
+gate and the new `ad0` custom launch frame. It generates an explicit CMake file
+list, so old images left in the build directory are not included in the VPK.
+Missing artwork or a missing launch link fails preparation; configuring without
+the generated file list fails instead of creating a VPK without the artwork.
 The original workstation's softfp SDK is the local default when present;
 otherwise the script uses `VITASDK`. The explicit parameter overrides both.
 The script rejects hard-float SDK defaults. No emulator is started.
@@ -87,3 +92,5 @@ replaces a physical Vita replay of the Zomboss encounter.
 Hardware checks remain necessary: leave a menu idle, resume touch, overlap two
 fingers, play a busy wave, save and relaunch. Return `userdata/loader.log`.
 Touch statistics and `mat4_skipped` are included in the bounded frame reports.
+See [the private testing guide](docs/private-testing.md) for the current device
+baseline and the short tester checklist.

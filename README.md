@@ -25,7 +25,7 @@ layer, with graphics provided by vitaGL.
 
 | | |
 | :-- | :-- |
-| Current build | **v1 release candidate 4** · `452-v1-rc4` |
+| Current build | **v1 release candidate 5** · `452-v1-rc5` |
 | Supported game | Android **4.5.2 ROW**, version **147**, ARMv7 |
 | Game data | `ux0:data/pvz2/` |
 | Saves, settings, logs and caches | `ux0:data/pvz2/userdata/` |
@@ -50,14 +50,21 @@ source, not the proprietary game library, game assets or your save data.
 
 ### New in this candidate
 
-RC4 addresses the stack corruption behind the reported Ancient Egypt Zomboss
-crash. The game's fallback placement could write beyond its 9×10 scratch grid
+RC5 brings the new **ad0 LiveArea design**, including its custom launch frame,
+background, bubble icon and loading artwork. Packaging now follows the supplied
+layout's asset references and keeps its launch link and credits intact. The
+tester pack verifies every LiveArea file against the built VPK.
+
+The fix for the reported Ancient Egypt Zomboss crash remains. The game's
+fallback placement could write beyond its 9×10 scratch grid
 and overwrite a pointer later passed to `delete`. The port now clips those grid
 writes while preserving native placement and object positioning.
 
 The original failure was reproduced in an isolated ARM instruction check.
 The compiled fix preserves the pointer and passes the bridge and bounds checks.
-**The Zomboss encounter still needs to be replayed on a physical Vita with RC4.**
+The latest physical RC4 log has no reported crash or resource error through
+frame 16800. It does not identify the played level or record a completed boss
+encounter. RC5 changes packaging and the build label; gameplay code is unchanged.
 See [the crash analysis](docs/zomboss-crash.md) for the evidence and limits.
 
 ## Requirements
@@ -92,7 +99,7 @@ If you received a prepared tester folder, copy its `pvz2` folder directly into
 
 **Updating an existing install:** install only the new VPK over the previous
 one. Keep your data and `userdata/` folder. No fresh save or cache deletion is
-needed for RC4.
+needed for RC5.
 
 ## Controls and saves
 
@@ -108,8 +115,9 @@ are migrated automatically; conflicting copies are preserved and reported.
 ## Performance and testing status
 
 The port targets 60 FPS, but **does not maintain 60 FPS in every scene**.
-The latest RC3 device log reached frame 11700 with several windows around
-60 FPS before the reported crash. Earlier heavy scenes fell into the low 20s.
+The latest RC4 device log reached frame 16800, with a median sampled window of
+55.95 FPS and many windows around 60 FPS. Its final window fell to 19.89 FPS,
+with about 49.6 ms inside the native game call and 4.1 ms sampled draw time.
 First-time shader compilation and CPU-heavy game updates can still cause drops.
 
 Real Vita logs confirm native workers running on cores 1–2, alongside the main
@@ -117,7 +125,7 @@ game/render thread on core 0. Adding worker threads cannot automatically split
 the original game's sequential update and render work across all cores.
 
 Boot, menus and gameplay have been exercised on hardware. Full-world completion,
-the RC4 Zomboss fix and long-session stability remain under test. This is a
+boss encounter completion and long-session stability remain under test. This is a
 release candidate, not a claim that every level has been completed without issues.
 
 ## Reporting a problem
@@ -146,6 +154,8 @@ they do not publish a release or replace hardware testing.
 
 ## Credits
 
+- **LiveArea package** — assets credited to **standard republic** and port to
+  **KingTorro** in the supplied layout; those credits are preserved on the LiveArea.
 - **LeZergan** — project direction, Vita testing and port presentation.
 - **OpenAI Codex / AI coding assistants** — port-specific implementation,
   debugging and documentation under LeZergan's direction: fully vibecoded.

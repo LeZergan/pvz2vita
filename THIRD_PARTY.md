@@ -24,3 +24,6 @@ Keep all upstream notices when distributing derived source or binaries.
 Original port contributions follow the MIT notices in their files; artwork
 and proprietary game data are not relicensed by those notices. The supplied
 LiveArea artwork includes game branding belonging to its respective owners.
+The September 7 replacement LiveArea package credits assets to standard republic
+and the port to KingTorro in its supplied XML. The package keeps that credit text
+unchanged; it does not grant a new license over the game's branded artwork.

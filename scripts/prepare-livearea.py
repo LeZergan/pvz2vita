@@ -1,52 +1,105 @@
-"""Validate the supplied LiveArea artwork and encode installable Vita PNGs."""
+"""Validate supplied LiveArea layouts and encode installable Vita PNGs.
+
+The XML selects the background and launch assets. Preserve it byte-for-byte:
+custom ad0 launch frames must not be replaced with the previous a1 gate.
+"""
 from pathlib import Path
 from io import BytesIO
-import shutil
+import hashlib
+import json
+import re
 import xml.etree.ElementTree as ET
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'livearea/sce_sys'
 DEST = ROOT / 'vita/direct/extras/livearea'
-ASSETS = {
-    'icon0.png': ((128, 128), 'icon0.png'),
-    'pic0.png': ((960, 544), 'pic0.png'),
-    'livearea/contents/bg0.png': ((840, 500), 'bg0.png'),
-    'livearea/contents/startup.png': ((280, 158), 'startup.png'),
-}
+
+
+def write_changed(path, data):
+    if not path.exists() or path.read_bytes() != data:
+        path.write_bytes(data)
+
+
+def image_name(value):
+    name = (value or '').strip()
+    # Asset references are package-local filenames, never paths or CMake code.
+    if not re.fullmatch(r'[A-Za-z0-9_-]+\.png', name):
+        raise ValueError(f'Unsupported LiveArea image reference: {name!r}')
+    return name
+
 
 def main():
-    DEST.mkdir(parents=True, exist_ok=True)
-    for relative, (size, name) in ASSETS.items():
-        with Image.open(SOURCE / relative) as im:
+    template = SOURCE / 'livearea/contents/template.xml'
+    xml = template.read_bytes()
+    tree = ET.fromstring(xml)
+    if tree.tag != 'livearea' or tree.get('style') not in {'a1', 'ad0'}:
+        raise ValueError('Expected an a1 or ad0 LiveArea layout')
+    background = image_name(tree.findtext('livearea-background/image'))
+    refs = {image_name(n.text) for n in tree.findall('.//image') + tree.findall('.//startup-image')}
+    gate = tree.find('gate/startup-image')
+    launches = [item for item in tree.findall('.//liveitem')
+                if item.findtext('target', '').strip() == 'psla:eboot' and item.find('image') is not None]
+    if gate is None and not launches:
+        raise ValueError('LiveArea needs a launch gate or an image frame targeting psla:eboot')
+
+    assets = [('icon0.png', 'sce_sys/icon0.png', (128, 128)),
+              ('pic0.png', 'sce_sys/pic0.png', (960, 544))]
+    for name in sorted(refs):
+        expected = (840, 500) if name == background else ((280, 158) if name == 'startup.png' else None)
+        if gate is not None and name == image_name(gate.text):
+            expected = (280, 158)
+        assets.append(('livearea/contents/' + name, 'sce_sys/livearea/contents/' + name, expected))
+    names = [Path(relative).name for relative, _, _ in assets]
+    if len(names) != len(set(names)):
+        raise ValueError('LiveArea asset filenames must be unique')
+
+    # Validate everything before replacing outputs. Do not package unrelated or
+    # stale images from a previous layout in the generated directory.
+    prepared = []
+    for relative, archive, size in assets:
+        source = SOURCE / relative
+        with Image.open(source) as im:
             im.load()
-            if im.size != size:
+            if size is not None and im.size != size:
                 raise ValueError(f'{relative}: expected {size}, found {im.size}')
-            # Re-encode without editor metadata. Preserve existing palettes;
-            # the supplied RGB bubble needs an 8-bit indexed palette on Vita.
-            if im.mode == 'P':
-                encoded = im.copy()
-                transparency = im.info.get('transparency')
-            else:
-                encoded = im.convert('RGBA').quantize(colors=256, method=Image.Quantize.FASTOCTREE)
-                transparency = encoded.info.get('transparency')
+            if not (0 < im.width <= 960 and 0 < im.height <= 544):
+                raise ValueError(f'{relative}: invalid image dimensions {im.size}')
+            actual_size = im.size
+            encoded = im.copy() if im.mode == 'P' else im.convert('RGBA').quantize(
+                colors=256, method=Image.Quantize.FASTOCTREE)
+            transparency = im.info.get('transparency') if im.mode == 'P' else encoded.info.get('transparency')
             encoded.info.clear()
             output = BytesIO()
             kwargs = {'transparency': transparency} if transparency is not None else {}
             encoded.save(output, format='PNG', optimize=True, bits=8, **kwargs)
             data = output.getvalue()
-            assert data[24:29] == bytes([8, 3, 0, 0, 0]), 'Expected indexed, noninterlaced PNG'
-            target = DEST / name
-            if not target.exists() or target.read_bytes() != data:
-                target.write_bytes(data)
-            print(f'{name}: {size[0]}x{size[1]}, indexed PNG, {len(data)} bytes')
-    template = SOURCE / 'livearea/contents/template.xml'
-    tree = ET.parse(template)
-    assert tree.getroot().tag == 'livearea'
-    assert tree.findtext('livearea-background/image') == 'bg0.png'
-    assert tree.findtext('gate/startup-image') == 'startup.png'
-    if not (DEST/'template.xml').exists() or (DEST/'template.xml').read_bytes() != template.read_bytes():
-        shutil.copyfile(template, DEST/'template.xml')
+            if data[24:29] != bytes([8, 3, 0, 0, 0]):
+                raise ValueError(f'{relative}: expected indexed, noninterlaced PNG')
+            with Image.open(BytesIO(data)) as verified:
+                verified.load()
+                if verified.size != actual_size:
+                    raise ValueError(f'{relative}: encoded image dimensions changed')
+            prepared.append((Path(relative).name, archive, data, actual_size))
+    prepared.append(('template.xml', 'sce_sys/livearea/contents/template.xml', xml, None))
+
+    DEST.mkdir(parents=True, exist_ok=True)
+    files = []
+    cmake = ['# Generated by scripts/prepare-livearea.py; only active layout assets.',
+             'set(PVZ2_LIVEAREA_FILES']
+    for name, archive, data, size in prepared:
+        write_changed(DEST / name, data)
+        files.append({'file': name, 'archive': archive, 'bytes': len(data),
+                      'sha256': hashlib.sha256(data).hexdigest(), 'dimensions': size})
+        cmake.append('  "${CMAKE_CURRENT_LIST_DIR}/' + name + '" "' + archive + '"')
+        print(f'{archive}: {size or tree.get("style")}, {len(data)} bytes')
+    cmake.append(')')
+    write_changed(DEST / 'files.cmake', ('\n'.join(cmake) + '\n').encode())
+    manifest = {'style': tree.get('style'), 'source_template_sha256': hashlib.sha256(xml).hexdigest(),
+                'files': files}
+    write_changed(DEST / 'manifest.json', (json.dumps(manifest, indent=2) + '\n').encode())
+    print(f'Validated {tree.get("style")} layout; original XML and launch target preserved.')
+
 
 if __name__ == '__main__':
     main()

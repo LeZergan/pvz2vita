@@ -411,7 +411,7 @@ int main(void) {
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
-    telemetry_log("BUILD", "452-v1-rc4 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1-rc5 " __DATE__ " " __TIME__);
     if (!pvz2_boot_check(setup_error, sizeof(setup_error))) fatal_error("%s", setup_error);
     telemetry_log("SETUP", "files/dependencies/writable save paths checked; OBB=%s", pvz2_obb_path());
     clocks_60fps();
