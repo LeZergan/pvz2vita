@@ -47,7 +47,7 @@ psp2core-...-eboot.bin.psp2dmp, keep that matching core dump as well.
 
 THIS CANDIDATE
 RC6 shares large texture conversions between the main thread and dedicated
-workers on cores 1-2. An already-unlocked core 3 is detected automatically.
+workers on available application cores.
 Alpha conversion uses a single pass with a smaller temporary buffer.
 Texture uploads now use the active unit's own format and size flags, fixing
 a bug that could affect loading assets. The new LiveArea and previous crash

@@ -25,16 +25,10 @@ No Android game files are included. You must supply your own matching
 
 ## Current release status
 
-RC6 is a private test candidate. No public download is available yet.
+RC6 is a private test candidate. It adds parallel texture preparation and corrects
+texture tracking during loading. These changes still need a Vita test.
 
-- **Install `pvz2-vita-latest.vpk` over the previous build.** Keep your game files
-  and saves. No data rebuild is needed.
-- **The latest changes still need a Vita replay.** RC6 adds parallel texture
-  preparation and fixes texture tracking during loading. Earlier builds reached
-  gameplay on hardware; RC6's loading-flower flicker and performance changes
-  have passed source checks but need a device comparison.
-
-Changes are listed in [the v1 notes](docs/release-notes-v1.md).
+No public download is available yet. See [the v1 notes](docs/release-notes-v1.md).
 
 ## Requirements
 
@@ -46,9 +40,8 @@ Install the following on a homebrew-enabled Vita before the loader:
 | [kubridge](https://github.com/TheOfficialFloW/kubridge) | `*KERNEL` | Required; reboot after installing |
 | `libshacccg.suprx` | `ur0:data/` or `ur0:data/external/` | [ShaRKBR33D](https://github.com/Rinnegatamante/ShaRKBR33D) can install it |
 
-Use the **4.5.2 ROW / version 147** game files. Other versions and regional builds
-are not interchangeable. [Supported file sizes and hashes](docs/BUILDING.md#supply-the-matching-archive-locally)
-are documented. Boot errors explain missing files, dependencies and save-folder problems.
+Use **4.5.2 ROW / version 147** game files. Other builds are not supported.
+[Check file sizes and hashes](docs/BUILDING.md#supply-the-matching-archive-locally).
 
 ## Setup
 
@@ -97,9 +90,6 @@ private testing channel.
 
 ## Reporting problems
 
-Please report freezes, input problems, lost progress, broken graphics, audio
-stutter and severe performance drops as well as crashes.
-
 Use the [bug report form](../../issues/new?template=bug-report.yml). Include:
 
 - the build ID and exact world, level or menu
@@ -118,18 +108,11 @@ confirm replaces the field, cancel keeps it. The game's character rules still ap
 Saves, settings, logs and caches live in `ux0:data/pvz2/userdata/`. Older save
 locations migrate automatically; conflicting copies are preserved and reported.
 
-## Optional performance plugins
-
-[CapUnlocker](https://github.com/GrapheneCt/CapUnlocker) exposes the reserved fourth
-core. RC6 detects it automatically if installed. The loader runs without it and
-uses the three normal application cores. No extra marker file is required.
-
 ## Known limitations
 
 - First-time shader compilation can stall new scenes.
 - Demanding menus and crowded waves can fall below the 60 FPS target.
-- The native game update/render path remains limited by its main thread, even
-  while workers prepare textures on other cores.
+- Game updates and rendering remain limited by the main thread.
 - Full-world completion and long sessions still need broader hardware coverage.
 
 See [the private testing guide](docs/private-testing.md) for the current evidence

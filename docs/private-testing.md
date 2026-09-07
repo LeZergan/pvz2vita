@@ -1,8 +1,8 @@
 # RC6 private testing
 
 Install RC6 over the existing VPK and keep both game files and `userdata/`.
-It adds parallel texture preparation, fused alpha conversion, automatic detection
-of an already-unlocked fourth core and corrected texture-unit tracking. The RC5
+It adds parallel texture preparation, fused alpha conversion and corrected
+texture-unit tracking. The RC5
 LiveArea and RC4 placement crash fix remain. New changes pass isolated CPU/GL
 checks; no RC6 device run has been supplied yet.
 

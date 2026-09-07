@@ -9,10 +9,8 @@ Workers sleep on condition variables when idle. There is one active shared job;
 another caller uses the inline path rather than blocking behind it. Small images
 stay inline. Failed worker creation leaves a partial pool or the inline path.
 
-On normal Vita hardware the caller remains on core 0 and the two pixel workers
-request cores 1 and 2 individually, with the existing verified shared-mask fallback.
-An already-unlocked fourth core adds a third worker. Startup verifies the requested
-mask before exposing that core to the game. No marker file is needed.
+The caller remains on core 0. Pixel workers request distinct available application
+cores, with a verified shared-mask fallback.
 
 Alpha atlas reduction now averages source alpha directly into RGBA output.
 For a 1024×1024 alpha upload reduced to 512×512, temporary conversion memory
@@ -42,7 +40,7 @@ odd sizes, unaligned inputs, transparent alpha, concurrent callers, buffer lifet
 and zero/one/two/three-worker operation. `check-texture-units.py` exercises the
 production binding and upload functions against a mocked driver, including alpha
 and RGBA units, raw bindings, failed allocations, ID reuse and fused subimages.
-`check-worker-affinity.py` checks verified normal/unlocked masks and fallbacks.
+`check-worker-affinity.py` checks verified affinity masks and fallbacks.
 
 These are small CPU-only checks. They do not start the game, a GPU context, Vita3K
 or desktop control. The Vita VPK is built with the project's softfp SDK. No RC6
@@ -58,4 +56,3 @@ report counts completed work alongside the existing kernel thread counters.
 - [VitaSDK thread API](https://github.com/vitasdk/vita-headers/blob/master/include/psp2/kernel/threadmgr/thread.h): affinity changes and kernel thread information.
 - [VitaSDK CPU masks](https://github.com/vitasdk/vita-headers/blob/master/include/psp2/kernel/cpu.h): ordinary application cores and the system core.
 - [vitaGL](https://github.com/Rinnegatamante/vitaGL): rendering and thread-safety checks; graphics calls stay on the rendering thread.
-- [CapUnlocker](https://github.com/GrapheneCt/CapUnlocker): optional access to the fourth core for game applications.
