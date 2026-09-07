@@ -67,11 +67,15 @@ python3 scripts/check-touch-render.py
 python3 scripts/check-program-cache.py
 python3 scripts/check-program-binding.py
 python3 scripts/check-placement.py
+python3 scripts/check-worker-affinity.py
+python3 scripts/check-pixel-workers.py
+python3 scripts/check-texture-units.py
 ```
 
 These compile the production functions with minimal system adapters. They
 check multi-contact IDs, read failures, idle sampling recovery, IME release
-barriers, projection upload caching and program lifetime. They use no graphics,
+barriers, projection upload caching, program lifetime, texture unit metadata,
+parallel pixel conversion, worker fallbacks and affinity verification. They use no graphics,
 audio, emulator or desktop control. The other `check-*.py` scripts have
 additional local SDK/game-data prerequisites documented in their source.
 

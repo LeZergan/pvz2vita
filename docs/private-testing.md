@@ -1,9 +1,10 @@
-# RC5 private testing
+# RC6 private testing
 
-RC5 packages the September 7 LiveArea design with its original `ad0` layout,
-custom `psla:eboot` launch frame and supplied credits. Gameplay code is the same
-as RC4; only the build label changes in the runtime. Install the VPK over the
-existing version and keep both game files and `userdata/`.
+Install RC6 over the existing VPK and keep both game files and `userdata/`.
+It adds parallel texture preparation, fused alpha conversion, automatic detection
+of an already-unlocked fourth core and corrected texture-unit tracking. The RC5
+LiveArea and RC4 placement crash fix remain. New changes pass isolated CPU/GL
+checks; no RC6 device run has been supplied yet.
 
 ## Latest device evidence
 
@@ -28,12 +29,13 @@ new core dump in the supplied folder; the existing dump is the older RC3 crash.
 
 The slow final window follows a resource-heavy transition. The counters identify
 time spent in the native game call, but do not identify the specific game
-function responsible. A new runtime patch is not justified from this log alone.
+function responsible. The RC6 changes address verified bridge code issues. They do not establish
+which native function dominates that final window or a new FPS result.
 
 ## Short device checklist
 
-1. Install RC5 and launch from its custom LiveArea frame. Check the icon,
-   background, logo and loading artwork on the console.
+1. Install RC6 and watch the white flower during loading. Enter/leave the level
+   selector twice; record any flash, loading delay and FPS on both visits.
 2. Play a regular level and Ancient Egypt Zomboss. For any slowdown, record
    the level and whether it happens during loading, animation or a crowded wave.
 3. Leave a menu idle and resume touch; try overlapping fingers and keyboard
@@ -46,3 +48,16 @@ function responsible. A new runtime patch is not justified from this log alone.
 Each port log is capped at 2 MiB plus one previous copy. The current log is about
 40 KiB. The tester folder and source repository remain private; no public release
 is created by this packaging pass.
+
+## Reading the new counters
+
+`[PIXELS] worker=... mask=...` is emitted once per pixel worker at startup.
+In each 300-frame report, `jobs`, `parallel`, `worker_px` and `caller_px` count
+completed texture conversions and output pixels for that interval. Positive
+`worker_px` proves conversion work completed on helpers; a zero during steady
+gameplay is normal if no textures needed conversion. `[THREADS]` retains actual
+kernel runtime and affinity measurements. The pool can use fewer workers if a
+thread could not be created; conversion still completes inline.
+
+Compare the same save, scene and warm-cache route with RC5. Do not interpret
+compiler checks or host CPU timings as Vita FPS results.

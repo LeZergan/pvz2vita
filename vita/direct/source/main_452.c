@@ -28,6 +28,7 @@
 #include "utils/glutil.h"
 #include "utils/init.h"
 #include "utils/telemetry.h"
+#include "utils/pixel_workers.h"
 #include "utils/text_field_452.h"
 #include "utils/boot_check.h"
 #include "utils/dialog.h"
@@ -379,6 +380,8 @@ static void run_60fps_loop(void) {
             char threads[176];
             extern void pvz2_threads_format_stats(char *, size_t);
             pvz2_threads_format_stats(threads, sizeof(threads));
+            char pixels[144];
+            pvz2_pixels_format_stats(pixels, sizeof(pixels));
             char touch_stats[160];
             controls_format_stats(touch_stats, sizeof(touch_stats));
             unsigned sampled_draw, upload, uploads;
@@ -389,7 +392,7 @@ static void run_60fps_loop(void) {
             telemetry_log("60FPS", "frame=%u measured=%u.%02u fps\n"
                 "[PERF] avg_us input=%u game=%u present=%u max=%u over18ms=%u/300 JNI_live=%u created=%u freed=%u heap_used=%u KiB\n"
                 "[RENDER] sampled_draw_us=%u upload_us=%u uploads=%u\n"
-                "[GPU] free KiB vram=%u ram=%u slow=%u\n[AUDIOQ] %s\n[SHADERS] %s\n[THREADS] %s\n[TOUCH] %s",
+                "[GPU] free KiB vram=%u ram=%u slow=%u\n[AUDIOQ] %s\n[SHADERS] %s\n[THREADS] %s\n[TOUCH] %s\n[PIXELS] %s",
                 frame, fps_x100 / 100u, fps_x100 % 100u,
                 (unsigned)(pump_us / 300), (unsigned)(draw_us / 300),
                 (unsigned)(present_us / 300), peak_us, slow_frames,
@@ -397,7 +400,7 @@ static void run_60fps_loop(void) {
                 sampled_draw, upload, uploads,
                 (unsigned)(vglMemFree(VGL_MEM_VRAM) / 1024),
                 (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024),
-                (unsigned)(vglMemFree(VGL_MEM_SLOW) / 1024), audio, shaders, threads, touch_stats);
+                (unsigned)(vglMemFree(VGL_MEM_SLOW) / 1024), audio, shaders, threads, touch_stats, pixels);
             pump_us = draw_us = present_us = 0;
             peak_us = slow_frames = 0;
             sample_start = now;
@@ -411,12 +414,14 @@ int main(void) {
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
-    telemetry_log("BUILD", "452-v1-rc5 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1-rc6 " __DATE__ " " __TIME__);
     if (!pvz2_boot_check(setup_error, sizeof(setup_error))) fatal_error("%s", setup_error);
     telemetry_log("SETUP", "files/dependencies/writable save paths checked; OBB=%s", pvz2_obb_path());
     clocks_60fps();
     extern void pvz2_init_thread_affinity(void);
     pvz2_init_thread_affinity();
+    extern int pvz2_cpu_core_count(void);
+    pvz2_pixels_init((unsigned)pvz2_cpu_core_count() - 1u);
     log_memory_stage("startup");
 
     /* Catch a mixed hard/soft-float SDK before game data gets corrupted.

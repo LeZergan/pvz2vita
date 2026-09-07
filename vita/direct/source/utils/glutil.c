@@ -11,6 +11,7 @@
 #include "utils/boot_check.h"
 #include "utils/texture_marks.h"
 #include "utils/telemetry.h"
+#include "utils/pixel_workers.h"
 
 #include "reimpl/egl.h"
 #include "utils/utils.h"
@@ -1723,6 +1724,8 @@ static GLint gl_get_int_for_diag(GLenum pname, GLenum *query_err) {
 
 static GLenum g_diag_active_texture = GL_TEXTURE0;
 static GLuint g_diag_bound_texture_2d[GL_DIAG_TEX_UNIT_CAP];
+/* Current active unit's texture, not the last texture bound on any unit. */
+static GLuint s_texlru_bound = 0;
 
 /* POT-awareness for the wrap fix. The blanket REPEAT->CLAMP clamp (see
  * clamp_repeat_wrap) keeps NPOT textures complete on GXM, but it also kills
@@ -1780,6 +1783,7 @@ void glActiveTexture_soloader(GLenum texture) {
     glActiveTexture(texture);
     if (gl_texture_unit_index(texture) >= 0) {
         g_diag_active_texture = texture;
+        s_texlru_bound = g_diag_bound_texture_2d[gl_texture_unit_index(texture)];
     }
     (void)s_count;
 #else
@@ -1789,6 +1793,7 @@ void glActiveTexture_soloader(GLenum texture) {
 
     if (err == GL_NO_ERROR && gl_texture_unit_index(texture) >= 0) {
         g_diag_active_texture = texture;
+        s_texlru_bound = g_diag_bound_texture_2d[gl_texture_unit_index(texture)];
     }
 
     if (gl_sampler_diag_should_log(s_count, pre_err, err)) {
@@ -1843,7 +1848,6 @@ void glActiveTexture_soloader(GLenum texture) {
 #else
 #define TEXLRU_MAXTEX 1000000u  /* vitaGL has NO texture-object limit — eviction is unnecessary AND harmful (glDeleteTextures-ing textures the engine still uses crashes during scene loads). Effectively disabled. */
 #endif
-static GLuint s_texlru_bound = 0;
 #ifdef USE_PVR_PSP2
 typedef struct { GLuint id; GLuint bytes; uint32_t use; } texlru_ent;
 static texlru_ent s_texlru[TEXLRU_SLOTS];
@@ -2588,9 +2592,24 @@ static int etc1_decode_enabled(void) {
 static void texture_marks_reset(GLuint id);
 static void texture_error(GLenum err, GLsizei width, GLsizei height);
 
+/* Uploads are cold paths. Loader-owned drawing can bypass our wrappers. */
+static void texture_sync_upload_binding(GLenum target) {
+    if (target != GL_TEXTURE_2D) return;
+    GLint active = GL_TEXTURE0, bound = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
+    int unit = gl_texture_unit_index((GLenum)active);
+    if (unit >= 0) {
+        g_diag_active_texture = (GLenum)active;
+        g_diag_bound_texture_2d[unit] = (GLuint)bound;
+    }
+    s_texlru_bound = (GLuint)bound;
+}
+
 void glCompressedTexImage2D_soloader(GLenum target, GLint level, GLenum internalformat,
                                      GLsizei width, GLsizei height, GLint border,
                                      GLsizei imageSize, const void *data) {
+    texture_sync_upload_binding(target);
     if (level == 0 && target == GL_TEXTURE_2D) texture_marks_reset(s_texlru_bound);
     static unsigned int s_count = 0;
     s_count++;
@@ -2713,32 +2732,12 @@ void glCompressedTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffse
  * those are the dominant GPU consumer (~32MB of the ~47MB texture load) and the
  * engine samples with normalized UVs, so a half-res copy renders identically. */
 static uint8_t *downsample_rgba8888_2x(const uint8_t *src, int w, int h) {
-    int dw = w >> 1, dh = h >> 1;
-    if (dw < 1 || dh < 1) return NULL;
-    uint8_t *dst = (uint8_t *)malloc((size_t)dw * (size_t)dh * 4u);
-    if (!dst) return NULL;
-    for (int y = 0; y < dh; y++) {
-        const uint8_t *r0 = src + (size_t)(y * 2) * w * 4;
-        const uint8_t *r1 = r0 + (size_t)w * 4;
-        uint8_t *d = dst + (size_t)y * dw * 4;
-        for (int x = 0; x < dw; x++) {
-            const uint8_t *a = r0 + (size_t)(x * 2) * 4;
-            const uint8_t *b = a + 4;
-            const uint8_t *c = r1 + (size_t)(x * 2) * 4;
-            const uint8_t *e = c + 4;
-            d[0] = (uint8_t)(((int)a[0] + b[0] + c[0] + e[0]) >> 2);
-            d[1] = (uint8_t)(((int)a[1] + b[1] + c[1] + e[1]) >> 2);
-            d[2] = (uint8_t)(((int)a[2] + b[2] + c[2] + e[2]) >> 2);
-            d[3] = (uint8_t)(((int)a[3] + b[3] + c[3] + e[3]) >> 2);
-            d += 4;
-        }
-    }
-    return dst;
+    return pvz2_pixels_convert(src, w, h, PVZ2_RGBA_HALF);
 }
 
 /* Set of texture IDs whose storage we allocated at half-res, so glTexSubImage2D
  * knows to downsample its data and halve its region to match. Keyed by the
- * glBindTexture argument (s_texlru_bound). Single GL context -> no lock needed. */
+ * active unit's binding. Single GL context -> no lock needed. */
 #define DSAMP_SLOTS 2048u
 static GLuint s_dsamp[DSAMP_SLOTS];
 static void dsamp_mark(GLuint id) {
@@ -2951,22 +2950,10 @@ static void texture_error(GLenum err, GLsizei width, GLsizei height) {
                       (unsigned)(vglMemFree(VGL_MEM_RAM)/1024));
 }
 
-/* Expand an 8-bit alpha image to RGBA8888: RGB=white, A=source byte. Caller frees. */
-static uint8_t *expand_a8_to_rgba8888(const uint8_t *src, int w, int h) {
-    if (w < 1 || h < 1) return NULL;
-    size_t n = (size_t)w * (size_t)h;
-    uint8_t *dst = (uint8_t *)malloc(n * 4u);
-    if (!dst) return NULL;
-    for (size_t i = 0; i < n; i++) {
-        dst[i * 4 + 0] = 255; dst[i * 4 + 1] = 255; dst[i * 4 + 2] = 255;
-        dst[i * 4 + 3] = src ? src[i] : 0;
-    }
-    return dst;
-}
-
 static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalformat,
                        GLsizei width, GLsizei height, GLint border,
                        GLenum format, GLenum type, const void *pixels) {
+    texture_sync_upload_binding(target);
     if (level == 0 && target == GL_TEXTURE_2D) texture_marks_reset(s_texlru_bound);
     static unsigned int s_count = 0;
     if (++s_count <= 300)
@@ -2983,16 +2970,19 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
         /* Expanding A8->RGBA is 4x the memory; for large atlases that bloats
          * vitaGL's GPU pool until it NULL-allocs a vertex gather -> draw crash.
          * Halve large ones so the footprint nets back to ~A8 (correct alpha, a bit
-         * blurry). dsamp_mark makes glTexSubImage2D_soloader expand THEN downsample
-         * its A8 fills to match the half-size RGBA storage. */
-        int ds = (width >= 1024 || height >= 1024);
+         * blurry). dsamp_mark makes glTexSubImage2D_soloader convert and halve
+         * its A8 fills in a single pass to match the half-size RGBA storage. */
+        int ds = width >= 2 && height >= 2 && (width >= 1024 || height >= 1024);
         int aw = ds ? (width >> 1) : width;
         int ah = ds ? (height >> 1) : height;
         uint8_t *rgba = NULL;
         if (pixels) {
-            uint8_t *full = expand_a8_to_rgba8888((const uint8_t *)pixels, width, height);
-            if (full && ds) { rgba = downsample_rgba8888_2x(full, width, height); free(full); }
-            else rgba = full;
+            rgba = pvz2_pixels_convert(pixels, width, height,
+                                      ds ? PVZ2_ALPHA_HALF : PVZ2_ALPHA_RGBA);
+            if (!rgba) {
+                texture_error(GL_OUT_OF_MEMORY, width, height);
+                return;
+            }
         }
         if (ds) dsamp_mark((GLuint)s_texlru_bound);
         (void)drain_gl_errors_limited();
@@ -3108,6 +3098,7 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
 void glTexImage2D_soloader(GLenum target, GLint level, GLint internalformat,
                            GLsizei width, GLsizei height, GLint border,
                            GLenum format, GLenum type, const void *pixels) {
+    texture_sync_upload_binding(target);
     if (level == 0 && target == GL_TEXTURE_2D) texture_marks_reset(s_texlru_bound);
     static unsigned int s_count = 0;
     s_count++;
@@ -3340,6 +3331,7 @@ void glTexImage2D_soloader(GLenum target, GLint level, GLint internalformat,
 void glTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffset,
                               GLint yoffset, GLsizei width, GLsizei height,
                               GLenum format, GLenum type, const void *pixels) {
+    texture_sync_upload_binding(target);
     static unsigned int s_count = 0;
     s_count++;
 
@@ -3402,10 +3394,18 @@ void glTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffset,
     }
 #endif
 
+    int alpha_halved = 0;
     /* alpha8 texture (allocated as RGBA8 in glTexImage2D_pvz2): expand the A8 fill
      * to RGBA8 (white + alpha) so it matches the RGBA storage. */
     if (format == GL_ALPHA && type == GL_UNSIGNED_BYTE && alpha8_is((GLuint)s_texlru_bound)) {
-        uint8_t *ax = expand_a8_to_rgba8888((const uint8_t *)pixels, width, height);
+        alpha_halved = level == 0 && dsamp_is(s_texlru_bound);
+        uint8_t *ax = pvz2_pixels_convert(pixels, width, height,
+                                        alpha_halved ? PVZ2_ALPHA_HALF : PVZ2_ALPHA_RGBA);
+        if (!ax) {
+            texture_error(GL_OUT_OF_MEMORY, width, height);
+            free(converted);
+            return;
+        }
         if (ax) {
             upload_format = GL_RGBA;
             upload_type = GL_UNSIGNED_BYTE;
@@ -3418,9 +3418,16 @@ void glTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffset,
     /* If glTexImage2D halved this texture's storage, downsample the sub-image
      * data and halve its region so it matches the 512² allocation. */
     uint8_t *sub_ds = NULL;
-    if (level == 0 && upload_type == GL_UNSIGNED_BYTE && upload_format == GL_RGBA &&
+    if (alpha_halved) {
+        xoffset >>= 1; yoffset >>= 1; width >>= 1; height >>= 1;
+    } else if (level == 0 && upload_type == GL_UNSIGNED_BYTE && upload_format == GL_RGBA &&
         upload_pixels && width >= 2 && height >= 2 && dsamp_is((GLuint)s_texlru_bound)) {
         sub_ds = downsample_rgba8888_2x((const uint8_t *)upload_pixels, width, height);
+        if (!sub_ds) {
+            texture_error(GL_OUT_OF_MEMORY, width, height);
+            free(converted);
+            return;
+        }
         if (sub_ds) {
             upload_pixels = sub_ds;
             xoffset >>= 1;

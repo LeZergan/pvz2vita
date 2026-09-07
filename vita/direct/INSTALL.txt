@@ -1,5 +1,5 @@
-Plants vs Zombies 2 for PS Vita - private test candidate 5
-Build: 452-v1-rc5 | Game: 4.5.2 ROW (version 147)
+Plants vs Zombies 2 for PS Vita - private test candidate 6
+Build: 452-v1-rc6 | Game: 4.5.2 ROW (version 147)
 
 ALREADY INSTALLED?
 Install pvz2-vita-latest.vpk over the previous version. That's all.
@@ -46,17 +46,17 @@ Each log is capped at 2 MiB plus one previous copy. If Vita generated a
 psp2core-...-eboot.bin.psp2dmp, keep that matching core dump as well.
 
 THIS CANDIDATE
-Uses the new ad0 LiveArea package: background, custom launch frame, icon,
-loading artwork and supplied credits. Packaging checks the active layout
-and every image so older/missing artwork cannot silently enter the VPK.
-Gameplay code is unchanged from RC4; its placement crash fix is retained.
-The new RC4 Vita log reached frame 16800 without a reported fatal/resource
-error, audio starvation or touch-read failure. Workers ran on cores 1-2.
-Median sampled FPS was 55.95, but the final window dropped to 19.89 FPS.
-This is a private candidate; not every level or long session is verified.
+RC6 shares large texture conversions between the main thread and dedicated
+workers on cores 1-2. An already-unlocked core 3 is detected automatically.
+Alpha conversion uses a single pass with a smaller temporary buffer.
+Texture uploads now use the active unit's own format and size flags, fixing
+a bug that could affect loading assets. The new LiveArea and previous crash
+fix are retained. CPU checks pass; the loading flower and speed improvement
+still need a physical Vita comparison. Some scenes remain below 60 FPS.
 
 SHORT PRIVATE TEST
-1. Launch from the new LiveArea frame and check that the artwork displays.
+1. Launch, watch the white loading flower, and enter/leave the level selector
+   twice. Note any flicker and whether the second visit loads faster.
 2. Play a normal level and the world-one Zomboss encounter; note any slowdown.
 3. Leave a menu idle, then resume touch; try the Vita keyboard and cancel.
 4. Finish a level, close/reopen the game and check your saved progress.

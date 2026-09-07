@@ -42,7 +42,7 @@ static int counted_create(pthread_t *t,const pthread_attr_t *a,void *(*f)(void *
 #define PTHR_INLINE static inline
 '''
 c+=part('PTHR_INLINE int _attr_t_static_init','// null check for `mutex`')
-c+=part('int pvz2_cpu_core_count(void)', 'int pthread_mutexattr_init_soloader(')
+c+=part('void pvz2_init_thread_affinity(void)', 'int pthread_mutexattr_init_soloader(')
 c+=r'''
 static void *job(void *arg) {
     atomic_store(&observed,actual_mask);
@@ -51,6 +51,13 @@ static void *job(void *arg) {
     return (void *)42;
 }
 int main(void) {
+    allowed_mask=0x70000; pvz2_init_thread_affinity();
+    assert(pvz2_cpu_core_count()==3 && actual_mask==0x10000);
+    allowed_mask=0xf0000; pvz2_init_thread_affinity();
+    assert(pvz2_cpu_core_count()==4 && actual_mask==0x10000);
+    lying=1; pvz2_init_thread_affinity();
+    assert(pvz2_cpu_core_count()==3); lying=0;
+    allowed_mask=0x60000;
     assert(pvz2_cpu_core_count()==3);
     atomic_store(&g_core3_mask,0xe0000); assert(pvz2_cpu_core_count()==4);
     assert(!worker_apply_affinity(1) && actual_mask==0x60000); /* Locked core 3. */

@@ -231,12 +231,11 @@ void pvz2_threads_format_stats(char *out, size_t size) {
 void pvz2_init_thread_affinity(void) {
     SceUID self = sceKernelGetThreadId();
     int workers = 0x00060000;
-    FILE *f = fopen(DATA_PATH "enable_core3.txt", "r");
-    if (f) {
-        fclose(f);
-        if (sceKernelChangeThreadCpuAffinityMask(self, 0x000E0000) >= 0)
-            workers = 0x000E0000;
-    }
+    /* Probe an already-unlocked fourth core; ordinary hardware rejects this.
+     * Verify actual affinity before advertising the extra worker core. */
+    if (sceKernelChangeThreadCpuAffinityMask(self, 0x000E0000) >= 0 &&
+        sceKernelGetThreadCpuAffinityMask(self) == 0x000E0000)
+        workers = 0x000E0000;
     atomic_store(&g_core3_mask, workers);
     int rc = sceKernelChangeThreadCpuAffinityMask(self, 0x00010000);
     telemetry_log("CPU", "main mask=0x%05x rc=0x%08x; workers mask=0x%05x",
