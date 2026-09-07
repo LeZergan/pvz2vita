@@ -1,10 +1,9 @@
 # Plants vs. Zombies 2 for PS Vita — v1
 
-**Prepared release text. Current artifact: RC6, private testing. No release is published.**
+**Current build: v1 RC6.**
 
-Take the lawn through time on PS Vita. This unofficial native port supports
-the Android 4.5.2 ROW game, with touchscreen controls, Vita keyboard entry and
-local progress stored on the console.
+Unofficial Vita port of Android 4.5.2 ROW, with touchscreen controls, Vita keyboard
+entry and local saves.
 
 ## Included
 

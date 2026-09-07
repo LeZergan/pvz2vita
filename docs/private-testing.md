@@ -2,8 +2,8 @@
 
 Install RC6 over the existing VPK and keep both game files and `userdata/`.
 It adds parallel texture preparation, fused alpha conversion and corrected
-texture-unit tracking. The RC5
-LiveArea and RC4 placement crash fix remain. New changes pass isolated CPU/GL
+texture-unit tracking. The RC5 LiveArea and RC4 placement crash fix remain.
+New changes pass isolated CPU/GL
 checks; no RC6 device run has been supplied yet.
 
 ## Latest device evidence
@@ -45,9 +45,7 @@ which native function dominates that final window or a new FPS result.
    Preserve it before relaunching after a failure; include a new Vita core dump
    if one was generated. Do not send the game library or OBB in a source issue.
 
-Each port log is capped at 2 MiB plus one previous copy. The current log is about
-40 KiB. The tester folder and source repository remain private; no public release
-is created by this packaging pass.
+Each port log is capped at 2 MiB plus one previous copy. The current log is about 40 KiB.
 
 ## Reading the new counters
 

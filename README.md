@@ -11,7 +11,7 @@
 
 Unofficial PS Vita loader for the Android 4.5.2 ROW build of *Plants vs. Zombies 2*.
 
-[Setup](#setup) — [Report a problem](../../issues/new?template=bug-report.yml)
+[Setup](#setup) — [Report a problem](../../issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
 
 | | |
 | :-- | :-- |
@@ -25,10 +25,9 @@ No Android game files are included. You must supply your own matching
 
 ## Current release status
 
-RC6 is a private test candidate. It adds parallel texture preparation and corrects
-texture tracking during loading. These changes still need a Vita test.
+Earlier builds reached gameplay on Vita. RC6's texture changes await hardware testing.
 
-No public download is available yet. See [the v1 notes](docs/release-notes-v1.md).
+See [what changed in v1](docs/release-notes-v1.md).
 
 ## Requirements
 
@@ -52,7 +51,7 @@ Install `pvz2-vita-latest.vpk` with VitaShell.
 ### 2. Prepare the data folder
 
 Put your `libPVZ2.so` and main OBB in a folder named `pvz2`. Rename the OBB
-to `game.obb`. A prepared tester pack already contains this folder.
+to `game.obb`.
 
 ### 3. Copy the data to the Vita
 
@@ -84,9 +83,7 @@ Back up `userdata/` to preserve your progress.
 Send the whole file. Include `runtime.log`, `jni.log` and a previous log copy if
 available. Each port log is capped at **2 MiB plus one previous copy**.
 
-For a crash, preserve the matching `psp2core-…-eboot.bin.psp2dmp` too. Core dumps
-are separate system files and can contain game state; send them through the
-private testing channel.
+For a crash, keep the matching `psp2core-…-eboot.bin.psp2dmp` for diagnosis.
 
 ## Reporting problems
 
@@ -136,9 +133,13 @@ No Android executable, library, OBB or gameplay archive is included or linked.
 This is an unofficial fan project, unaffiliated with PopCap Games or Electronic
 Arts. Game names, artwork and trademarks belong to their respective owners.
 
+## Contributors
+
+- **LeZergan** — project direction and real Vita testing.
+- **OpenAI Codex (AI contributor)** — port implementation, fixes and documentation.
+
 ## Credits
 
-- LeZergan — project direction and real Vita testing; OpenAI Codex — AI-generated port work
 - standard republic — LiveArea assets; KingTorro — port credit in the supplied layout
 - Andy "TheFloW" Nguyen — `.so` loader groundwork, so_util, fios and kubridge
 - Rinnegatamante — vitaGL, vitaShaRK and math-neon

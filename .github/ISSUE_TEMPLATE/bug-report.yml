@@ -32,8 +32,8 @@ body:
   - type: textarea
     id: evidence
     attributes:
-      label: Logs and crash dump
-      description: Preserve userdata/loader.log before relaunching. Attach the matching log and, for a crash, the matching psp2dmp through the private testing channel. Do not upload the game library, OBB or account credentials.
+      label: Logs
+      description: Attach userdata/loader.log before relaunching. For a crash, keep the matching psp2dmp for diagnosis. Do not upload game files or account credentials.
   - type: textarea
     id: performance
     attributes:
