@@ -11,11 +11,11 @@
 
 Unofficial PS Vita loader for the Android 4.5.2 ROW build of *Plants vs. Zombies 2*.
 
-[Setup](#setup) — [Report a problem](../../issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
+[Download](../../releases/tag/v1.0) — [Report a problem](../../issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
 
 | | |
 | :-- | :-- |
-| Loader | PvZ2 v1 RC6 (`452-v1-rc6`) |
+| Loader | PvZ2 v1.0 (`452-v1-rc6`) |
 | Supported Android set | 4.5.2 ROW, version 147, ARMv7 |
 | Data path | `ux0:data/pvz2` |
 | Licence | [MIT](LICENSE), with third-party notices |
@@ -25,9 +25,8 @@ No Android game files are included. You must supply your own matching
 
 ## Current release status
 
-Earlier builds reached gameplay on Vita. RC6's texture changes await hardware testing.
-
-See [what changed in v1](docs/release-notes-v1.md).
+**v1.0 is available.** The loader is very early in development. Expect slowdowns
+and possible crashes. See [known issues](#known-issues) and [release notes](docs/release-notes-v1.md).
 
 ## Requirements
 
@@ -105,12 +104,12 @@ confirm replaces the field, cancel keeps it. The game's character rules still ap
 Saves, settings, logs and caches live in `ux0:data/pvz2/userdata/`. Older save
 locations migrate automatically; conflicting copies are preserved and reported.
 
-## Known limitations
+## Known issues
 
+- Slowdowns during power activation.
+- FPS drops when many zombies are on screen.
+- You may experience crashes; the loader is very early in development.
 - First-time shader compilation can stall new scenes.
-- Demanding menus and crowded waves can fall below the 60 FPS target.
-- Game updates and rendering remain limited by the main thread.
-- Full-world completion and long sessions still need broader hardware coverage.
 
 See [the private testing guide](docs/private-testing.md) for the current evidence
 and the short test route.

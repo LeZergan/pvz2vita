@@ -1,6 +1,6 @@
-# Plants vs. Zombies 2 for PS Vita — v1
+# Plants vs. Zombies 2 for PS Vita — v1.0
 
-**Current build: v1 RC6.**
+**Build: `452-v1-rc6`.**
 
 Unofficial Vita port of Android 4.5.2 ROW, with touchscreen controls, Vita keyboard
 entry and local saves.
@@ -25,13 +25,15 @@ Follow [Setup](../README.md#setup). Existing testers can install the new VPK ove
 their current build and keep their data and saves. Game files and system plugins
 are not supplied by the source repository.
 
-## Current limits
+## Known issues
 
-60 FPS is the target; demanding scenes and first-time shader compilation still
-drop below it. The native game update/render path remains limited by its main
-thread. Previous builds have reached gameplay on real hardware, but full-world
-completion, long sessions and RC6's new texture changes still need testing.
-See [private testing](private-testing.md) for the exact evidence and replay route.
+- Slowdowns during power activation.
+- FPS drops when many zombies are on screen.
+- You may experience crashes; the loader is very early in development.
+- First-time shader compilation can stall new scenes.
+
+The latest texture changes still need a hardware retest. Full-world completion
+and long sessions remain under test. See [testing status](private-testing.md).
 
 ## Credits
 
