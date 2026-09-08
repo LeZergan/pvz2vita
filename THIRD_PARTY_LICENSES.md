@@ -6,6 +6,11 @@
 - FalsoJNI by Volodymyr Atamanenko: MIT;
   `vita/direct/lib/falso_jni/LICENSE` and its README retain the project notice.
 - miniz: `vita/direct/third_party/miniz/LICENSE`.
+- Pthreads-embedded condition cleanup by Jason Schmidlapp, based on
+  Pthreads-win32 by John E. Bossom and contributors: LGPL-2.0-or-later.
+  The corrected destructor retains its notices in
+  `vita/direct/source/reimpl/pthread_cond_native.c`; license text is in
+  `vita/direct/third_party/pthread-embedded/LICENSE`.
 - 64-bit time conversion: Michael G Schwern; MIT notice in
   `vita/direct/source/reimpl/time64.c`.
 - SHA-1 implementation: Brad Conte; original notice retained in

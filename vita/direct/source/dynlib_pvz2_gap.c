@@ -166,8 +166,6 @@ so_default_dynlib pvz2_gap_dynlib[] = {
     { "pthread_rwlock_rdlock",   (uintptr_t)&ret0 },
     { "pthread_rwlock_wrlock",   (uintptr_t)&ret0 },
     { "pthread_rwlock_unlock",   (uintptr_t)&ret0 },
-    { "pthread_condattr_init",   (uintptr_t)&ret0 },
-    { "pthread_condattr_destroy",(uintptr_t)&ret0 },
 
     /* EA::Nimble bridge (libNimble.so not loaded — see stubs above) */
     { "_ZN2EA6Nimble6getEnvEv",    (uintptr_t)&EA_Nimble_getEnv },

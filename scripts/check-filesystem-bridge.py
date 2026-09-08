@@ -21,6 +21,8 @@ code=r'''
 #define l_warn(...) ((void)0)
 #define l_debug(...) ((void)0)
 #define l_error(...) ((void)0)
+#define PVZ2_WAIT(...) ((void)0)
+#define pvz2_stall_wait_done() ((void)0)
 typedef struct { int64_t max_size,free_size; uint32_t cluster_size; void *unk; } SceIoDevInfo;
 static SceIoDevInfo volume={256LL<<30,128LL<<30,32768,0};
 static int device_error;

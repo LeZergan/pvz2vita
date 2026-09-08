@@ -29,6 +29,7 @@
 
 #include "utils/logger.h"
 #include "utils/utils.h"
+#include "utils/stall_watch.h"
 
 // --- OBB file I/O diagnostics ---------------------------------------------
 // The engine opens the .obb archive and reads script/resource entries from it
@@ -1086,7 +1087,11 @@ int rename_soloader(const char *oldp, const char *newp) {
     struct stat source;
     if (stat(a, &source) != 0) return -1;
     ensure_parent_dirs_for_path(b, 0777);
+    PVZ2_WAIT(PVZ2_WAIT_RENAME, 0);
     int r = rename(a, b);
+    int rename_errno = errno;
+    pvz2_stall_wait_done();
+    errno = rename_errno;
     if (r == 0) {
         l_debug("rename(%s -> %s) ok", a, b);
         if (path_is_savedata_bundle(a) || path_is_savedata_bundle(b)) {
@@ -1437,7 +1442,11 @@ int ioctl_soloader(int fd, int request, ...) {
 }
 
 int fsync_soloader(int fd) {
+    PVZ2_WAIT(PVZ2_WAIT_FSYNC, fd);
     int ret = fsync(fd);
+    int sync_errno = errno;
+    pvz2_stall_wait_done();
+    errno = sync_errno;
     l_debug("fsync(%i): %i", fd, ret);
     return ret;
 }

@@ -9,6 +9,8 @@
  */
 
 #include "reimpl/pthr.h"
+#include "reimpl/errno.h"
+#include "utils/stall_watch.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -261,6 +263,11 @@ static int worker_apply_affinity(SceUID self) {
     }
     return rc < 0 ? rc : -1;
 }
+static void pvz2_worker_cleanup(void *arg) {
+    int slot = *(int *)arg;
+    pvz2_stall_thread_exit();
+    if (slot >= 0) atomic_store(&worker_stats_ids[slot], 0);
+}
 static void *mcsm_thr_entry(void *arg) {
     mcsm_thr_wrap *w = (mcsm_thr_wrap *)arg;
     void *(*start)(void *) = w->start;
@@ -281,8 +288,11 @@ static void *mcsm_thr_entry(void *arg) {
             break;
         }
     }
-    void *result = start(param);
-    if (slot >= 0) atomic_store(&worker_stats_ids[slot], 0);
+    void *result;
+    /* Also release observer/stat slots when Android calls pthread_exit. */
+    pthread_cleanup_push(pvz2_worker_cleanup, &slot);
+    result = start(param);
+    pthread_cleanup_pop(1);
     return result;
 }
 
@@ -296,16 +306,16 @@ int pthread_create_soloader(pthread_t *thread, const pthread_attr_t_bionic *attr
     pthread_attr_t *real_attr = NULL;
 
     if (!thread || !start) {
-        return EINVAL;
+        return bionic_pthread_result(EINVAL);
     }
 
     if (!attr) {
         ret = pthread_attr_init(&local_attr);
-        if (ret) return ret;
+        if (ret) return bionic_pthread_result(ret);
         real_attr = &local_attr;
     } else {
         ret = _attr_t_static_init((pthread_attr_t_bionic *)attr);
-        if (ret) return ret;
+        if (ret) return bionic_pthread_result(ret);
         real_attr = attr->real_ptr;
     }
 
@@ -328,7 +338,7 @@ int pthread_create_soloader(pthread_t *thread, const pthread_attr_t_bionic *attr
     mcsm_thr_wrap *wrap = (mcsm_thr_wrap *)malloc(sizeof(mcsm_thr_wrap));
     if (!wrap) {
         if (!attr) pthread_attr_destroy(&local_attr);
-        return ENOMEM;
+        return bionic_pthread_result(ENOMEM);
     }
     if (wrap) {
         wrap->start = start;
@@ -373,37 +383,37 @@ int pthread_create_soloader(pthread_t *thread, const pthread_attr_t_bionic *attr
         pthread_attr_destroy(&local_attr);
     }
 
-    return ret;
+    return bionic_pthread_result(ret);
 }
 
 int pthread_mutexattr_init_soloader(pthread_mutexattr_t *attr)
 {
-    return pthread_mutexattr_init(attr);
+    return bionic_pthread_result(pthread_mutexattr_init(attr));
 }
 
 int pthread_mutexattr_settype_soloader(pthread_mutexattr_t *attr, int type)
 {
-    return pthread_mutexattr_settype(attr, type);
+    return bionic_pthread_result(pthread_mutexattr_settype(attr, type));
 }
 
 int pthread_mutexattr_destroy_soloader(pthread_mutexattr_t *attr)
 {
-    return pthread_mutexattr_destroy(attr);
+    return bionic_pthread_result(pthread_mutexattr_destroy(attr));
 }
 
 int pthread_kill_soloader(pthread_t thread, int sig)
 {
-    return pthread_kill(thread, sig);
+    return bionic_pthread_result(pthread_kill(thread, sig));
 }
 
 int pthread_mutex_init_soloader(pthread_mutex_t_bionic *uid, const pthread_mutexattr_t *attr)
 {
-    if (!uid) return EINVAL;
-    return _mutex_t_static_init(uid, attr);
+    if (!uid) return bionic_pthread_result(EINVAL);
+    return bionic_pthread_result(_mutex_t_static_init(uid, attr));
 }
 
 int pthread_mutex_destroy_soloader(pthread_mutex_t_bionic *object) {
-    if (!object) return EINVAL;
+    if (!object) return bionic_pthread_result(EINVAL);
     PTHR_LOCK
     int slot = object_slot(object), rc = 0;
     if (slot >= 0) {
@@ -415,63 +425,68 @@ int pthread_mutex_destroy_soloader(pthread_mutex_t_bionic *object) {
         }
     } else object->real_ptr = NULL;
     PTHR_UNLOCK
-    return rc;
+    return bionic_pthread_result(rc);
 }
 
 int pthread_mutex_lock_soloader(pthread_mutex_t_bionic *mutex)
 {
-    if (!mutex) return EINVAL;
+    if (!mutex) return bionic_pthread_result(EINVAL);
     int rc = _mutex_t_static_init(mutex, NULL);
-    if (rc) return rc;
-    return pthread_mutex_lock(mutex->real_ptr);
+    if (rc) return bionic_pthread_result(rc);
+    return bionic_pthread_result(pthread_mutex_lock(mutex->real_ptr));
 }
 
 int pthread_mutex_trylock_soloader(pthread_mutex_t_bionic *mutex)
 {
-    if (!mutex) return EINVAL;
+    if (!mutex) return bionic_pthread_result(EINVAL);
     int rc = _mutex_t_static_init(mutex, NULL);
-    if (rc) return rc;
-    return pthread_mutex_trylock(mutex->real_ptr);
+    if (rc) return bionic_pthread_result(rc);
+    return bionic_pthread_result(pthread_mutex_trylock(mutex->real_ptr));
 }
 
 int pthread_mutex_unlock_soloader(pthread_mutex_t_bionic *mutex)
 {
-    if (!mutex) return EINVAL;
-    if (!mutex->real_ptr) return EINVAL;
-    return pthread_mutex_unlock(mutex->real_ptr);
+    if (!mutex) return bionic_pthread_result(EINVAL);
+    if (!mutex->real_ptr) return bionic_pthread_result(EINVAL);
+    return bionic_pthread_result(pthread_mutex_unlock(mutex->real_ptr));
 }
 
 int pthread_join_soloader(pthread_t thread, void **value_ptr)
 {
-    return pthread_join(thread, value_ptr);
+    PVZ2_WAIT(PVZ2_WAIT_JOIN, thread);
+    int rc = pthread_join(thread, value_ptr);
+    pvz2_stall_wait_done();
+    return bionic_pthread_result(rc);
 }
 
 int pthread_condattr_init_soloader(pthread_condattr_t *attr)
 {
-    if (!attr) return EINVAL;
-    return pthread_condattr_init(attr);
+    if (!attr) return bionic_pthread_result(EINVAL);
+    return bionic_pthread_result(pthread_condattr_init(attr));
 }
 
 int pthread_condattr_destroy_soloader(pthread_condattr_t *attr)
 {
-    if (!attr) return EINVAL;
-    return pthread_condattr_destroy(attr);
+    if (!attr) return bionic_pthread_result(EINVAL);
+    return bionic_pthread_result(pthread_condattr_destroy(attr));
 }
 
 int pthread_cond_init_soloader(pthread_cond_t_bionic *cond,
                                const pthread_condattr_t *attr)
 {
-    if (!cond) return EINVAL;
+    if (!cond) return bionic_pthread_result(EINVAL);
 
-    return _cond_t_static_init(cond, attr);
+    return bionic_pthread_result(_cond_t_static_init(cond, attr));
 }
 
 int pthread_cond_destroy_soloader(pthread_cond_t_bionic *object) {
-    if (!object) return EINVAL;
+    if (!object) return bionic_pthread_result(EINVAL);
     PTHR_LOCK
     int slot = object_slot(object), rc = 0;
     if (slot >= 0) {
+        PVZ2_WAIT(PVZ2_WAIT_COND_DESTROY, object);
         rc = pthread_cond_destroy(object->real_ptr);
+        pvz2_stall_wait_done();
         if (!rc) {
             remove_slot((unsigned)slot);
             free(object->real_ptr);
@@ -479,102 +494,108 @@ int pthread_cond_destroy_soloader(pthread_cond_t_bionic *object) {
         }
     } else object->real_ptr = NULL;
     PTHR_UNLOCK
-    return rc;
+    return bionic_pthread_result(rc);
 }
 
 int pthread_cond_signal_soloader(pthread_cond_t_bionic *cond)
 {
-    if (!cond) return EINVAL;
+    if (!cond) return bionic_pthread_result(EINVAL);
 
     int rc = _cond_t_static_init(cond, NULL);
-    if (rc) return rc;
+    if (rc) return bionic_pthread_result(rc);
 
-    return pthread_cond_signal(cond->real_ptr);
+    return bionic_pthread_result(pthread_cond_signal(cond->real_ptr));
 }
 
 int pthread_cond_timedwait_soloader(pthread_cond_t_bionic *cond, pthread_mutex_t_bionic *mutex, struct timespec *abstime)
 {
-    if (!cond || !mutex) return EINVAL;
+    if (!cond || !mutex) return bionic_pthread_result(EINVAL);
 
     int rc = _cond_t_static_init(cond, NULL);
     if (!rc) rc = _mutex_t_static_init(mutex, NULL);
-    if (rc) return rc;
+    if (rc) return bionic_pthread_result(rc);
 
-    return pthread_cond_timedwait(cond->real_ptr, mutex->real_ptr, abstime);
+    PVZ2_WAIT(PVZ2_WAIT_TIMED_COND, cond);
+    rc = pthread_cond_timedwait(cond->real_ptr, mutex->real_ptr, abstime);
+    pvz2_stall_wait_done();
+    return bionic_pthread_result(rc);
 }
 
 
 int pthread_cond_wait_soloader(pthread_cond_t_bionic *cond, pthread_mutex_t_bionic *mutex)
 {
-    if (!cond || !mutex) return EINVAL;
+    if (!cond || !mutex) return bionic_pthread_result(EINVAL);
 
     int rc = _cond_t_static_init(cond, NULL);
     if (!rc) rc = _mutex_t_static_init(mutex, NULL);
-    if (rc) return rc;
+    if (rc) return bionic_pthread_result(rc);
 
-    return pthread_cond_wait(cond->real_ptr, mutex->real_ptr);
+    PVZ2_WAIT(PVZ2_WAIT_COND, cond);
+    rc = pthread_cond_wait(cond->real_ptr, mutex->real_ptr);
+    pvz2_stall_wait_done();
+    return bionic_pthread_result(rc);
 }
 
 int pthread_cond_broadcast_soloader(pthread_cond_t_bionic *cond)
 {
-    if (!cond) return EINVAL;
+    if (!cond) return bionic_pthread_result(EINVAL);
 
     int rc = _cond_t_static_init(cond, NULL);
-    if (rc) return rc;
+    if (rc) return bionic_pthread_result(rc);
 
-    return pthread_cond_broadcast(cond->real_ptr);
+    return bionic_pthread_result(pthread_cond_broadcast(cond->real_ptr));
 }
 
 int pthread_attr_init_soloader(pthread_attr_t_bionic *attr)
 {
-    if (!attr) return EINVAL;
+    if (!attr) return bionic_pthread_result(EINVAL);
 
-    return _attr_t_static_init(attr);
+    return bionic_pthread_result(_attr_t_static_init(attr));
 }
 
 int pthread_attr_destroy_soloader(pthread_attr_t_bionic *attr)
 {
-    if (!attr) return 0;
-    if (attr->magic != 0x42424242) return 0;
+    if (!attr) return bionic_pthread_result(0);
+    if (attr->magic != 0x42424242) return bionic_pthread_result(0);
 
     int ret = pthread_attr_destroy(attr->real_ptr);
     free(attr->real_ptr);
     attr->magic = 0x0;
 
-    return ret;
+    return bionic_pthread_result(ret);
 }
 
 int pthread_attr_setdetachstate_soloader(pthread_attr_t_bionic *attr, int state)
 {
-    if (!attr) return -1;
+    if (!attr) return bionic_pthread_result(EINVAL);
     int rc = _attr_t_static_init(attr);
-    if (rc) return rc;
+    if (rc) return bionic_pthread_result(rc);
     state = !state; // pthread-embedded has JOINABLE/DETACHED swapped compared to BIONIC...
-    return pthread_attr_setdetachstate(attr->real_ptr, state);
+    return bionic_pthread_result(pthread_attr_setdetachstate(attr->real_ptr, state));
 }
 
 int pthread_attr_setstacksize_soloader(pthread_attr_t_bionic *attr, size_t stacksize) {
-    if (!attr) return -1;
+    if (!attr) return bionic_pthread_result(EINVAL);
     int rc = _attr_t_static_init(attr);
-    if (rc) return rc;
-    return pthread_attr_setstacksize(attr->real_ptr, stacksize);
+    if (rc) return bionic_pthread_result(rc);
+    return bionic_pthread_result(pthread_attr_setstacksize(attr->real_ptr, stacksize));
 }
 
 int pthread_setschedparam_soloader(pthread_t thread, int policy,
                                    const struct sched_param *param)
 {
-   return pthread_setschedparam(thread, policy, param);
+   return bionic_pthread_result(pthread_setschedparam(thread, policy, param));
 }
 
 int pthread_getschedparam_soloader(pthread_t thread, int *policy,
                                    struct sched_param *param)
 {
-    return pthread_getschedparam(thread, policy, param);
+    return bionic_pthread_result(pthread_getschedparam(thread, policy, param));
 }
 
 int pthread_detach_soloader(pthread_t thread)
 {
-    return pthread_detach(thread);
+    return bionic_pthread_result(pthread_detach(thread));
 }
 
 int pthread_equal_soloader(const pthread_t t1, const pthread_t t2)
@@ -620,16 +641,16 @@ int pthread_once_soloader(volatile int *once_control, void (*init_routine)(void)
 
 int pthread_setname_np_soloader(pthread_t thread, const char* thread_name) {
     if (thread == 0 || thread_name == NULL) {
-        return EINVAL;
+        return bionic_pthread_result(EINVAL);
     }
     size_t thread_name_len = strlen(thread_name);
     if (thread_name_len >= MAX_TASK_COMM_LEN) {
-        return ERANGE;
+        return bionic_pthread_result(ERANGE);
     }
 
     sceClibPrintf("PTHREAD: pthread_setname_np with name %s for thread:0x%x\n", thread_name, pthread_self());
 
-    return 0;
+    return bionic_pthread_result(0);
 }
 
 int sem_destroy_soloader(int * uid) {
@@ -724,7 +745,10 @@ int sem_wait_soloader (int * uid) {
         return -1;
     }
 
-    if (sceKernelWaitSema(*uid, 1, NULL) < 0) {
+    PVZ2_WAIT(PVZ2_WAIT_SEMA, *uid);
+    int rc = sceKernelWaitSema(*uid, 1, NULL);
+    pvz2_stall_wait_done();
+    if (rc < 0) {
         errno = EINTR;
         return -1;
     }

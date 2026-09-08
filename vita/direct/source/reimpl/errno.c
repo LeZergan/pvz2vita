@@ -114,7 +114,8 @@ static newlib_errno_to_bionic_errno errno_translation[] = {
 	{ EOWNERDEAD, EOWNERDEAD_BIONIC, "Owner died" },
 };
 
-static int translate_newlib_errno_to_bionic(int e) {
+int translate_newlib_errno_to_bionic(int e) {
+	if (e == 0) return 0;
 	for (int i = 0; i < sizeof(errno_translation) / sizeof(errno_translation[0]); ++i) {
 		if (e == errno_translation[i].errno_newlib) {
 			return errno_translation[i].errno_bionic;

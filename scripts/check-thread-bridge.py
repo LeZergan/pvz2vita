@@ -25,6 +25,9 @@ code = '''
 #include <time.h>
 #include "reimpl/pthr.h"
 #define sceClibMemset memset
+#define bionic_pthread_result(e) (e)
+#define PVZ2_WAIT(...) ((void)0)
+#define pvz2_stall_wait_done() ((void)0)
 /* POSIX permits undefined behavior destroying a locked normal mutex; inject
  * Vita/native destroy errors to check that the bridge preserves its object. */
 static int destroy_error;

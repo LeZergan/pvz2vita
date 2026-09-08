@@ -24,6 +24,10 @@ extern "C" {
 #include <stddef.h>
 
 int *__errno_soloader(void);
+int translate_newlib_errno_to_bionic(int error);
+static inline int bionic_pthread_result(int error) {
+    return error ? translate_newlib_errno_to_bionic(error) : 0;
+}
 
 char *strerror_soloader(int error_number);
 

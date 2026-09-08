@@ -73,6 +73,8 @@ python3 scripts/check-texture-units.py
 python3 scripts/check-time-bridge.py
 python3 scripts/check-filesystem-bridge.py
 python3 scripts/check-deadlines.py
+python3 scripts/check-stall-watch.py
+python3 scripts/check-thread-bridge.py
 ```
 
 These compile the production functions with minimal system adapters. They
@@ -111,3 +113,13 @@ fingers, play a busy wave, save and relaunch. Return `userdata/loader.log`.
 Touch statistics and `mat4_skipped` are included in the bounded frame reports.
 See [the private testing guide](private-testing.md) for the current device
 baseline and the short tester checklist.
+
+The intermittent transition investigation has an isolated compiled SDK check:
+
+```sh
+python3 scripts/check-cond-destroy-arm.py --loader-elf build-vita-direct/pvz2_loader
+```
+
+Pass `--old-loader-elf /path/to/rc1-loader.elf` to reproduce the original leaked
+condition-list locks first. No game files are needed for this check.
+[Diagnosis and current device evidence](level-transition-stall.md).

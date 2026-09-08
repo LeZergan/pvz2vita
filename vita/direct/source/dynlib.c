@@ -1055,6 +1055,8 @@ so_default_dynlib default_dynlib[] = {
         { "pthread_attr_setstacksize", (uintptr_t) &pthread_attr_setstacksize_soloader },
         { "pthread_attr_setschedparam", (uintptr_t) &ret0 },
 
+        { "pthread_condattr_init", (uintptr_t)&pthread_condattr_init_soloader },
+        { "pthread_condattr_destroy", (uintptr_t)&pthread_condattr_destroy_soloader },
         { "pthread_cond_broadcast", (uintptr_t) &pthread_cond_broadcast_soloader },
         { "pthread_cond_destroy", (uintptr_t) &pthread_cond_destroy_soloader },
         { "pthread_cond_init", (uintptr_t) &pthread_cond_init_soloader },

@@ -29,6 +29,7 @@
 #include "utils/glutil.h"
 #include "utils/init.h"
 #include "utils/telemetry.h"
+#include "utils/stall_watch.h"
 #include "utils/pixel_workers.h"
 #include "utils/text_field_452.h"
 #include "utils/boot_check.h"
@@ -341,18 +342,25 @@ static void run_60fps_loop(void) {
     uint64_t pump_us = 0, draw_us = 0, present_us = 0;
     uint32_t peak_us = 0, slow_frames = 0;
     telemetry_log("60FPS", "frame loop start: pump -> draw -> vblank swap, target 60 Hz");
+    pvz2_stall_start();
     for (;;) {
+        pvz2_stall_frame(frame, PVZ2_FRAME_INPUT);
         const uint64_t begin = sceKernelGetSystemTimeWide();
         controls_tick(begin);
         if (!pvz2_numeric_poll()) controls_poll();
+        pvz2_stall_frame(frame, PVZ2_FRAME_PUMP);
         pump(&jni, (jclass)1);
         const uint64_t pumped = sceKernelGetSystemTimeWide();
         extern void pvz2_gl_profile_begin(unsigned);
         pvz2_gl_profile_begin(frame);
+        pvz2_stall_frame(frame, PVZ2_FRAME_DRAW);
         draw(&jni, (jclass)1);
+        pvz2_stall_frame(frame, PVZ2_FRAME_CALLBACKS);
         fjni_drain_glu_http();
+        pvz2_stall_frame(frame, PVZ2_FRAME_KEYBOARD);
         pvz2_keyboard_after_frame();
         const uint64_t drawn = sceKernelGetSystemTimeWide();
+        pvz2_stall_frame(frame, PVZ2_FRAME_PRESENT);
         gl_swap();
         const uint64_t presented = sceKernelGetSystemTimeWide();
         pump_us += pumped - begin;
@@ -363,6 +371,7 @@ static void run_60fps_loop(void) {
         if (frame_us > 18000) ++slow_frames;
         ++frame;
         if ((frame % 300u) == 0u) {
+            pvz2_stall_frame(frame, PVZ2_FRAME_REPORT);
             uint64_t now = sceKernelGetSystemTimeWide();
             uint32_t elapsed = (uint32_t)(now - sample_start);
             uint32_t fps_x100 = elapsed
@@ -415,7 +424,7 @@ int main(void) {
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
-    telemetry_log("BUILD", "452-v1.1-rc1 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc2 " __DATE__ " " __TIME__);
     int32_t epoch_probe = 6;
     bionic_tm local_epoch;
     if (bionic_localtime_r(&epoch_probe, &local_epoch))

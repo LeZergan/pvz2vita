@@ -87,6 +87,7 @@ add_executable(${CMAKE_PROJECT_NAME}
                source/reimpl/numeric_input.c
                source/reimpl/opensl_audio.c
                source/reimpl/pthr.c
+               source/reimpl/pthread_cond_native.c
                source/reimpl/rsb_index_vita.cpp
                source/reimpl/sys.c
                source/reimpl/time64.c
@@ -103,6 +104,7 @@ add_executable(${CMAKE_PROJECT_NAME}
                source/utils/logger.c
                source/utils/settings.c
                source/utils/telemetry.c
+               source/utils/stall_watch.c
                source/utils/utils.c
                lib/falso_jni/FalsoJNI.c
                lib/falso_jni/FalsoJNI_ImplBridge.c
@@ -127,6 +129,8 @@ target_include_directories(${CMAKE_PROJECT_NAME}
 # double-lib-prefixed (liblibGLESv2_stub.a) -> link as -llibGLESv2_stub.
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
                         ${CMAKE_SOURCE_DIR}/lib/pvr/stubs_gen)
+
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,--wrap=pthread_cond_destroy)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
                       -Wl,--whole-archive pthread -Wl,--no-whole-archive

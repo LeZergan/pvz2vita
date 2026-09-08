@@ -16,6 +16,9 @@ c=r'''
 #include <assert.h>
 #include <stdatomic.h>
 #include "reimpl/pthr.h"
+#define bionic_pthread_result(e) (e)
+static atomic_int cleanup_calls;
+#define pvz2_stall_thread_exit() ((void)atomic_fetch_add(&cleanup_calls,1))
 typedef int SceUID;
 static atomic_int g_core3_mask=0x60000;
 #define WORKER_STATS_CAP 32
@@ -50,6 +53,7 @@ static void *job(void *arg) {
     free(arg); /* A successful launch must not read this pointer again. */
     return (void *)42;
 }
+static void *exit_job(void *arg) { pthread_exit(arg); return NULL; }
 int main(void) {
     allowed_mask=0x70000; pvz2_init_thread_affinity();
     assert(pvz2_cpu_core_count()==3 && actual_mask==0x10000);
@@ -73,6 +77,17 @@ int main(void) {
     for(int i=0;i<2;++i) assert(!pthread_create_soloader(&threads[i],NULL,job,malloc(8)));
     for(int i=0;i<2;++i) { assert(!pthread_join(threads[i],&result)); assert(result==(void *)42); }
     assert(atomic_load(&executed)==2 && atomic_load(&observed)==0x60000);
+    assert(atomic_load(&cleanup_calls)==2);
+    /* This Windows winpthreads build does not run cleanup handlers on explicit
+     * pthread_exit. Linux CI exercises that contract; Vita's compiled pte_throw
+     * calls pte_pop_cleanup(1) before its longjmp. Do not infer Vita behavior
+     * from the host library's missing cleanup. */
+#ifndef _WIN32
+    assert(!pthread_create_soloader(&threads[0],NULL,exit_job,(void *)84));
+    assert(!pthread_join(threads[0],&result) && result==(void *)84);
+    assert(atomic_load(&cleanup_calls)==3);
+#endif
+    for(unsigned i=0;i<WORKER_STATS_CAP;++i) assert(!atomic_load(&worker_stats_ids[i]));
     int before=create_calls; fail_alloc=1;
     assert(pthread_create_soloader(&threads[0],NULL,job,NULL)==ENOMEM);
     assert(create_calls==before && atomic_load(&executed)==2);

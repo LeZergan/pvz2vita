@@ -74,8 +74,8 @@ fields, 64-bit overflow, eight concurrent time callers and directory scans,
 RTC failure/recovery, parsing and formatting, full/unavailable storage, long
 names, end-of-directory, allocation failures and incomplete file I/O.
 
-These are isolated CPU tests, not a game or Vita3K session. No physical Vita
-run of RC1 has been supplied yet. The fixed offset follows the console's RTC;
+These are isolated CPU tests, not a game or Vita3K session. The September 9 RC1 Vita log confirms the UTC-4 epoch conversion and reaches
+8,400 frames before a separately investigated [transition stall](level-transition-stall.md). The fixed offset follows the console's RTC;
 the bridge does not provide Android's historical IANA timezone database.
 The rename preflight prevents the missing-source case; it does not make Vita
 newlib's replacement operation power-loss atomic. Keep save backups.
