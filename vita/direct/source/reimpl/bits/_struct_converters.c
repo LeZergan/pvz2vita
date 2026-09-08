@@ -14,6 +14,10 @@
  */
 
 #define SC_INLINE static inline __attribute__((always_inline))
+#if defined(__arm__)
+_Static_assert(sizeof(stat64_bionic) == 104, "Android ARMv7 stat size");
+_Static_assert(offsetof(stat64_bionic, st_size) == 48, "Android ARMv7 stat size offset");
+#endif
 
 #define BIONIC_O_WRONLY                                          01
 #define BIONIC_O_RDWR                                            02
@@ -59,17 +63,20 @@ SC_INLINE int oflags_bionic_to_newlib(int flags) {
  *
  * @param[in] dirent_newlib Pointer to a newlib-format dirent struct
  *
- * @return Pointer to a bionic-format dirent struct.
- *         Must be freed by the caller.
+ * @param[out] ret Caller-owned Android entry. No allocation per file.
  */
 SC_INLINE
-dirent64_bionic * dirent_newlib_to_bionic(const struct dirent* dirent_newlib) {
-    dirent64_bionic * ret = malloc(sizeof(dirent64_bionic));
-    strncpy(ret->d_name, dirent_newlib->d_name, sizeof(ret->d_name));
-    ret->d_off = 0;
-    ret->d_reclen = 0;
+void dirent_newlib_to_bionic(const struct dirent* dirent_newlib, dirent64_bionic *ret) {
+    memset(ret, 0, sizeof(*ret));
+    size_t length = strnlen(dirent_newlib->d_name, sizeof(ret->d_name)-1);
+    memcpy(ret->d_name, dirent_newlib->d_name, length);
+    /* Vita exposes no inode here. Stable nonzero names avoid looking like a
+     * deleted directory entry to Android callers that check d_ino. */
+    uint64_t inode = UINT64_C(14695981039346656037);
+    for (size_t i=0; i<length; ++i) inode=(inode^(unsigned char)ret->d_name[i])*UINT64_C(1099511628211);
+    ret->d_ino=inode ? inode : 1;
+    ret->d_reclen = (uint16_t)((offsetof(dirent64_bionic,d_name)+length+1+7)&~7u);
     ret->d_type = SCE_S_ISDIR(dirent_newlib->d_stat.st_mode) ? DT_DIR : DT_REG;
-    return ret;
 }
 
 /**
@@ -79,6 +86,7 @@ dirent64_bionic * dirent_newlib_to_bionic(const struct dirent* dirent_newlib) {
  */
 SC_INLINE
 void stat_newlib_to_bionic(const struct stat * src, stat64_bionic * dst) {
+    memset(dst, 0, sizeof(*dst));
     dst->st_dev = src->st_dev;
     dst->__st_ino = src->st_ino;
     dst->st_ino = src->st_ino;

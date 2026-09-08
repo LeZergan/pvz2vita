@@ -66,6 +66,7 @@
 #include "reimpl/egl_pvr_shim.h"
 #endif
 #include "reimpl/time64.h"
+#include "reimpl/bionic_time.h"
 #include "reimpl/asset_manager.h"
 
 const unsigned int __page_size = PAGE_SIZE;
@@ -1232,18 +1233,21 @@ so_default_dynlib default_dynlib[] = {
         { "SDL_GetPerformanceFrequency", (uintptr_t)&SDL_GetPerformanceFrequency_soloader },
         { "SDL_GetTicks", (uintptr_t)&SDL_GetTicks_soloader },
         { "difftime", (uintptr_t)&difftime_sf },
-        { "asctime", (uintptr_t)&asctime },
+        { "asctime", (uintptr_t)&bionic_asctime },
+        { "asctime_r", (uintptr_t)&bionic_asctime_r },
+        { "ctime_r", (uintptr_t)&bionic_ctime_r },
         { "gettimeofday", (uintptr_t)&gettimeofday },
-        { "gmtime", (uintptr_t)&gmtime },
-        { "gmtime64", (uintptr_t)&gmtime64 },
-        { "gmtime_r", (uintptr_t)&gmtime_r },
-        { "localtime", (uintptr_t)&localtime },
-        { "localtime64", (uintptr_t)&localtime64 },
-        { "localtime_r", (uintptr_t)&localtime_r },
-        { "mktime", (uintptr_t)&mktime },
-        { "mktime64", (uintptr_t)&mktime64 },
+        { "gmtime", (uintptr_t)&bionic_gmtime },
+        { "gmtime64", (uintptr_t)&bionic_gmtime64 },
+        { "gmtime_r", (uintptr_t)&bionic_gmtime_r },
+        { "localtime", (uintptr_t)&bionic_localtime },
+        { "localtime64", (uintptr_t)&bionic_localtime64 },
+        { "localtime_r", (uintptr_t)&bionic_localtime_r },
+        { "mktime", (uintptr_t)&bionic_mktime },
+        { "mktime64", (uintptr_t)&bionic_mktime64 },
         { "nanosleep", (uintptr_t)&nanosleep },
-        { "strftime", (uintptr_t)&strftime },
+        { "strftime", (uintptr_t)&bionic_strftime },
+        { "strptime", (uintptr_t)&bionic_strptime },
         { "time", (uintptr_t)&time },
         { "tzset", (uintptr_t)&tzset },
 

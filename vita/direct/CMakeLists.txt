@@ -24,7 +24,7 @@ include("${VITASDK}/share/vita.cmake" REQUIRED)
 set(VITA_APP_NAME "Plants vs Zombies 2")
 set(VITA_TITLEID  "PVZ2VITA1")
 set(VITA_VPKNAME  "pvz2-vita-452-60fps")
-set(VITA_VERSION  "01.00")
+set(VITA_VERSION  "01.01")
 # ATTRIBUTE2=12 grants the extended memory budget the game needs.
 set(VITA_MKSFOEX_FLAGS "-d ATTRIBUTE2=12")
 
@@ -76,6 +76,7 @@ add_executable(${CMAKE_PROJECT_NAME}
                source/reimpl/math_softfp.c
                source/java.c
                source/reimpl/bits/_ctype.c
+               source/reimpl/bionic_time.c
                source/reimpl/controls.c
                source/reimpl/egl.c
                source/reimpl/errno.c

@@ -23,3 +23,6 @@ jobs:
       - run: python scripts/check-worker-affinity.py
       - run: python scripts/check-pixel-workers.py
       - run: python scripts/check-texture-units.py
+      - run: python scripts/check-time-bridge.py
+      - run: python scripts/check-filesystem-bridge.py
+      - run: python scripts/check-deadlines.py

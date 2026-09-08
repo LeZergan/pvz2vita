@@ -1078,8 +1078,13 @@ int rename_soloader(const char *oldp, const char *newp) {
     /* remap_android_path returns a shared static buffer: copy the first result
      * before remapping the second, or both args would alias. */
     char a[1024];
+    if (!oldp || !newp) { errno = EFAULT; return -1; }
     snprintf(a, sizeof(a), "%s", remap_android_path(oldp));
     const char *b = remap_android_path(newp);
+    /* Newlib removes an existing destination before sceIoRename. A missing
+     * temporary source must not delete the current save. */
+    struct stat source;
+    if (stat(a, &source) != 0) return -1;
     ensure_parent_dirs_for_path(b, 0777);
     int r = rename(a, b);
     if (r == 0) {
@@ -1380,15 +1385,16 @@ DIR* opendir_soloader(char* _pathname) {
 }
 
 struct dirent64_bionic * readdir_soloader(DIR * dir) {
-    static struct dirent64_bionic dirent_tmp;
+    _Static_assert(sizeof(dirent64_bionic) == 280, "Android ARMv7 dirent size");
+    _Static_assert(offsetof(dirent64_bionic, d_name) == 19, "Android directory name offset");
+    static __thread struct dirent64_bionic dirent_tmp;
+    if (!dir) { errno = EBADF; return NULL; }
 
     struct dirent* ret = readdir(dir);
     l_debug("readdir(%p): %p", dir, ret);
 
     if (ret) {
-        dirent64_bionic* entry_tmp = dirent_newlib_to_bionic(ret);
-        memcpy(&dirent_tmp, entry_tmp, sizeof(dirent64_bionic));
-        free(entry_tmp);
+        dirent_newlib_to_bionic(ret, &dirent_tmp);
         return &dirent_tmp;
     }
 
@@ -1397,16 +1403,17 @@ struct dirent64_bionic * readdir_soloader(DIR * dir) {
 
 int readdir_r_soloader(DIR * dirp, dirent64_bionic * entry,
                        dirent64_bionic ** result) {
+    if (!result) return EINVAL;
+    *result = NULL;
+    if (!dirp || !entry) return EINVAL;
     struct dirent dirent_tmp;
-    struct dirent * pdirent_tmp;
+    struct dirent * pdirent_tmp = NULL;
 
     int ret = readdir_r(dirp, &dirent_tmp, &pdirent_tmp);
 
-    if (ret == 0) {
-        dirent64_bionic* entry_tmp = dirent_newlib_to_bionic(&dirent_tmp);
-        memcpy(entry, entry_tmp, sizeof(dirent64_bionic));
-        *result = (pdirent_tmp != NULL) ? entry : NULL;
-        free(entry_tmp);
+    if (ret == 0 && pdirent_tmp != NULL) {
+        dirent_newlib_to_bionic(pdirent_tmp, entry);
+        *result = entry;
     }
 
     l_debug("readdir_r(%p, %p, %p): %i", dirp, entry, result, ret);

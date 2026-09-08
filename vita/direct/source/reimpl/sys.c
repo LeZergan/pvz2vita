@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/rtc.h>
+#include <psp2/io/devctl.h>
 #include <stdlib.h>
 #include <setjmp.h>
 #include <semaphore.h>
@@ -41,8 +42,6 @@
 #define BIONIC_CLOCK_BOOTTIME_ALARM     9
 #define BIONIC_CLOCK_SGI_CYCLE         10
 #define BIONIC_CLOCK_TAI               11
-
-#define __epoch 62135587294000000
 
 #define AUX_AT_PLATFORM       15
 #define AUX_AT_HWCAP          16
@@ -94,11 +93,12 @@ int clock_gettime_soloader(clockid_t clock_id, struct timespec * tp) {
         case BIONIC_CLOCK_REALTIME_COARSE:
         case BIONIC_CLOCK_REALTIME_ALARM:
         case BIONIC_CLOCK_TAI: {
-            SceRtcTick tick;
-            if (sceRtcGetCurrentTick(&tick) < 0) { errno = EIO; return -1; }
-            tick.tick -= __epoch;
-            tp->tv_sec = (tick.tick / 1000000);
-            tp->tv_nsec = (tick.tick % UINT64_C(1000000)) * 1000;
+            /* Use the same Unix clock as time()/absolute wait deadlines.
+             * The former hardcoded RTC epoch was 9,506 seconds early. */
+            struct timeval now;
+            if (gettimeofday(&now, NULL) < 0) return -1;
+            tp->tv_sec = now.tv_sec;
+            tp->tv_nsec = now.tv_usec * 1000;
             break;
         }
         default:
@@ -109,7 +109,10 @@ int clock_gettime_soloader(clockid_t clock_id, struct timespec * tp) {
 }
 
 int clock_getres_soloader(clockid_t clock_id, struct timespec * res) {
-    res->tv_sec = 0; res->tv_nsec = 1000;
+    if (clock_id < BIONIC_CLOCK_REALTIME || clock_id > BIONIC_CLOCK_TAI) {
+        errno = EINVAL; return -1;
+    }
+    if (res) { res->tv_sec = 0; res->tv_nsec = 1000; }
     return 0;
 }
 
@@ -495,30 +498,33 @@ typedef struct bionic_statfs_compat {
     uint32_t f_flags;
     uint32_t f_spare[4];
 } bionic_statfs_compat;
+_Static_assert(sizeof(bionic_statfs_compat) == 88, "Android ARMv7 statfs size");
+_Static_assert(offsetof(bionic_statfs_compat, f_bavail) == 24, "Android free space offset");
 
 int statfs_soloader(const char *path, void *buf) {
-    if (!buf) return -1;
+    if (!path || !buf) { errno = EFAULT; return -1; }
+    const char *mapped = remap_android_path(path);
+    char device[16];
+    const char *colon = mapped ? strchr(mapped, ':') : NULL;
+    if (!colon || colon-mapped >= (int)sizeof(device)-1) { errno = ENOENT; return -1; }
+    size_t n = (size_t)(colon-mapped)+1;
+    memcpy(device, mapped, n); device[n] = 0;
+    SceIoDevInfo info = {0};
+    if (sceIoDevctl(device, 0x3001, NULL, 0, &info, sizeof(info)) < 0 ||
+        info.max_size < 0 || info.free_size < 0 || info.free_size > info.max_size) {
+        errno = EIO; return -1;
+    }
     bionic_statfs_compat st;
     memset(&st, 0, sizeof(st));
-    st.f_type = 0x58465342u;
+    st.f_type = 0x4d44u; /* FAT-compatible storage; report actual ux0 capacity. */
     st.f_bsize = 4096;
-    st.f_blocks = 1048576ULL;
-    st.f_bfree = 524288ULL;
-    st.f_bavail = 524288ULL;
-    st.f_files = 65536ULL;
-    st.f_ffree = 65535ULL;
+    st.f_blocks = (uint64_t)info.max_size / st.f_bsize;
+    st.f_bfree = (uint64_t)info.free_size / st.f_bsize;
+    st.f_bavail = st.f_bfree;
     st.f_namelen = 255;
     st.f_frsize = 4096;
-    memset(buf, 0, 128);
+    /* The game reserves 88 bytes. RC6 cleared 128, corrupting its caller. */
     memcpy(buf, &st, sizeof(st));
-    static unsigned s_log_count = 0;
-    if (s_log_count++ < 12U) {
-        l_info("statfs(%s) -> bsize=%u bavail=%llu free=%llu MB",
-               path ? path : "(null)",
-               (unsigned)st.f_bsize,
-               (unsigned long long)st.f_bavail,
-               (unsigned long long)((st.f_bavail * st.f_bsize) / (1024ULL * 1024ULL)));
-    }
     return 0;
 }
 

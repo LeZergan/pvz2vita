@@ -22,6 +22,7 @@
 #include <kubridge.h>
 
 #include "reimpl/controls.h"
+#include "reimpl/bionic_time.h"
 #include "reimpl/math_softfp.h"
 #include "reimpl/asset_manager.h"
 #include "java_runtime.h"
@@ -414,7 +415,14 @@ int main(void) {
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
-    telemetry_log("BUILD", "452-v1-rc6 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc1 " __DATE__ " " __TIME__);
+    int32_t epoch_probe = 6;
+    bionic_tm local_epoch;
+    if (bionic_localtime_r(&epoch_probe, &local_epoch))
+        telemetry_log("TIME", "Android tm=%u; epoch+6 local=%04d-%02d-%02d %02d:%02d:%02d offset=%d",
+                      (unsigned)sizeof(local_epoch), local_epoch.tm_year+1900,
+                      local_epoch.tm_mon+1, local_epoch.tm_mday, local_epoch.tm_hour,
+                      local_epoch.tm_min, local_epoch.tm_sec, local_epoch.tm_gmtoff);
     if (!pvz2_boot_check(setup_error, sizeof(setup_error))) fatal_error("%s", setup_error);
     telemetry_log("SETUP", "files/dependencies/writable save paths checked; OBB=%s", pvz2_obb_path());
     clocks_60fps();

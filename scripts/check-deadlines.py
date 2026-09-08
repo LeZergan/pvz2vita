@@ -17,6 +17,7 @@ struct vita_timespec { int32_t tv_sec, tv_nsec; };
 #define SCE_KERNEL_ERROR_WAIT_TIMEOUT 0x80028005u
 #define SCE_KERNEL_ERROR_WAIT_CANCEL 0x80028007u
 static int64_t now_us=1788652800123456LL;
+static int clock_failure;
 static unsigned waits, first_block, blocks;
 static int token, result_on_block, probe_error;
 static int sceKernelWaitSema(int id,int n,uint *timeout) {
@@ -31,18 +32,16 @@ static int sceKernelWaitSema(int id,int n,uint *timeout) {
     return (int)SCE_KERNEL_ERROR_WAIT_TIMEOUT;
 }
 static int fake_gettimeofday(struct timeval *t,void *tz) {
+    if (clock_failure) { errno=EIO; return -1; }
     t->tv_sec=now_us/1000000; t->tv_usec=now_us%1000000; return 0;
 }
 #define gettimeofday fake_gettimeofday
-typedef struct { uint64_t tick; } SceRtcTick;
-static const uint64_t __epoch=0;
 static uint64_t sceKernelGetSystemTimeWide(void) { return now_us; }
-static int sceRtcGetCurrentTick(SceRtcTick *t) { t->tick=now_us; return 0; }
 '''
 c+=p[p.index('int sem_timedwait_soloader'):p.index('int sem_trywait_soloader')]
 a=s.index('#define BIONIC_CLOCK_REALTIME '); b=s.index('\n',s.index('#define BIONIC_CLOCK_TAI ',a))
 c+=s[a:b]+'\n'
-c+=s[s.index('int clock_gettime_soloader'):s.index('int clock_getres_soloader')]
+c+=s[s.index('int clock_gettime_soloader'):s.index('clock_t clock_soloader')]
 c+=r'''
 int main(void) {
     int sem=1;
@@ -67,6 +66,11 @@ int main(void) {
     assert(!clock_gettime_soloader(1,&t) && t.tv_nsec==123456000);
     assert(clock_gettime_soloader(1234,&t)==-1 && errno==EINVAL);
     assert(clock_gettime_soloader(1,NULL)==-1 && errno==EFAULT);
+    clock_failure=1; t.tv_sec=123; t.tv_nsec=456;
+    assert(clock_gettime_soloader(0,&t)==-1 && errno==EIO && t.tv_sec==123 && t.tv_nsec==456);
+    assert(clock_getres_soloader(0,NULL)==0);
+    assert(clock_getres_soloader(99,NULL)==-1 && errno==EINVAL);
+    assert(!clock_getres_soloader(1,&t) && t.tv_sec==0 && t.tv_nsec==1000);
     puts("PASS: 32-bit epoch deadline (50ms, not 1ms); immediate/expired/invalid/rounded/long waits; interruption; normalized realtime/monotonic nanoseconds and errors");
 }
 '''

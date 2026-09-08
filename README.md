@@ -28,6 +28,9 @@ No Android game files are included. You must supply your own matching
 **v1.0 is available.** The loader is very early in development. Expect slowdowns
 and possible crashes. See [known issues](#known-issues) and [release notes](docs/release-notes-v1.md).
 
+Current source includes the **1.1 RC1 crash fixes** for timezone conversion,
+storage queries and directory scans. [Fixes and verification](docs/time-crash.md).
+
 ## Requirements
 
 Install the following on a homebrew-enabled Vita before the loader:

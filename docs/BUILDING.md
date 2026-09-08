@@ -70,6 +70,9 @@ python3 scripts/check-placement.py
 python3 scripts/check-worker-affinity.py
 python3 scripts/check-pixel-workers.py
 python3 scripts/check-texture-units.py
+python3 scripts/check-time-bridge.py
+python3 scripts/check-filesystem-bridge.py
+python3 scripts/check-deadlines.py
 ```
 
 These compile the production functions with minimal system adapters. They
@@ -92,6 +95,16 @@ the compiled ARM/Thumb bridge, production marker and fingerprint rejection.
 It runs only the isolated routines; it does not boot the game or Vita3K.
 See [the crash analysis](zomboss-crash.md). Neither this check nor CI
 replaces a physical Vita replay of the Zomboss encounter.
+
+The RC6 timezone crash has a separate bounded ARM regression:
+
+```sh
+python3 scripts/check-time-arm.py --game-lib /path/to/libPVZ2.so --loader-elf build-vita-direct/pvz2_loader
+```
+
+Optionally pass `--old-loader-elf /path/to/rc6-loader.elf` to reproduce the
+original NULL dereference and storage-buffer overwrite before checking the
+fixes. The supplied game library stays local. See [the time/ABI crash analysis](time-crash.md).
 
 Hardware checks remain necessary: leave a menu idle, resume touch, overlap two
 fingers, play a busy wave, save and relaunch. Return `userdata/loader.log`.

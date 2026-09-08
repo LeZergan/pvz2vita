@@ -25,6 +25,7 @@
 #include <math.h>
 #include "reimpl/mem.h"   /* memcpy_guarded — [PvZ2 MEMGUARD] */
 #include <time.h>
+#include "reimpl/bionic_time.h"
 #include <signal.h>
 
 #include <so_util/so_util.h>
@@ -112,7 +113,7 @@ so_default_dynlib pvz2_gap_dynlib[] = {
     /* real libc shims present in Vita newlib */
     { "dirname",     (uintptr_t)&dirname_s },
     { "strsep",      (uintptr_t)&strsep },
-    { "ctime",       (uintptr_t)&ctime },
+    { "ctime",       (uintptr_t)&bionic_ctime },
     { "swscanf",     (uintptr_t)&swscanf },
     { "iswalnum",    (uintptr_t)&iswalnum },
     { "nearbyintf",  (uintptr_t)&nearbyintf },
@@ -138,7 +139,7 @@ so_default_dynlib pvz2_gap_dynlib[] = {
     { "getgrgid",     (uintptr_t)&ret0 },
     { "getgrnam",     (uintptr_t)&ret0 },
     { "unsetenv",     (uintptr_t)&ret0 },
-    { "timegm",       (uintptr_t)&ret0 },   /* TODO: real UTC mktime if dates matter */
+    { "timegm",       (uintptr_t)&bionic_timegm },
 
     /* memory syscalls — no-op advisory / success */
     { "mprotect",  (uintptr_t)&ret0 },

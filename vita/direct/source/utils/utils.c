@@ -90,6 +90,7 @@ bool file_copy(const char * path, const char * destination) {
     if (!file_save(destination, buffer, size)) {
         l_error("file_copy: Failed to write data to the specified "
                 "destination path \"%s\".", destination);
+        free(buffer);
         return false;
     }
 
@@ -102,71 +103,36 @@ bool file_exists(const char * path) {
     return sceIoGetstat(path, &stat) >= 0;
 }
 
-bool file_load(const char * path, uint8_t ** buffer, size_t * size) {
-    if (!buffer || !size) {
-        l_error("file_load: Invalid argument(s).");
-        return false;
-    }
-
-    if (!file_exists(path)) {
-        l_error("file_load: Specified source path \"%s\" "
-                "does not exist.", path);
-        return false;
-    }
-
+bool file_load(const char *path, uint8_t **buffer, size_t *size) {
+    if (!path || !buffer || !size) { errno=EINVAL; return false; }
+    *buffer=NULL; *size=0;
 #ifdef USE_SCELIBC_IO
-    FILE * f = sceLibcBridge_fopen(path, "rb");
+    FILE *f=sceLibcBridge_fopen(path,"rb");
 #else
-    FILE * f = fopen(path, "rb");
+    FILE *f=fopen(path,"rb");
 #endif
-
-    if (!f) {
-        l_error("file_load: Could not open the specified "
-                "source path \"%s\".", path);
-        return false;
-    }
-
+    if (!f) { l_error("file_load: Cannot open %s.",path); return false; }
 #ifdef USE_SCELIBC_IO
-    sceLibcBridge_fseek(f, 0, SEEK_END);
-    *size = sceLibcBridge_ftell(f);
-    sceLibcBridge_fseek(f, 0, SEEK_SET);
+    long length=sceLibcBridge_fseek(f,0,SEEK_END)==0 ? sceLibcBridge_ftell(f) : -1;
+    if (sceLibcBridge_fseek(f,0,SEEK_SET)!=0) length=-1;
 #else
-    fseek(f, 0, SEEK_END);
-    *size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    long length=fseek(f,0,SEEK_END)==0 ? ftell(f) : -1;
+    if (fseek(f,0,SEEK_SET)!=0) length=-1;
 #endif
-
-    if (*size <= 0) {
-        l_error("file_load: The specified source file \"%s\" is empty.", path);
-    #ifdef USE_SCELIBC_IO
-        sceLibcBridge_fclose(f);
-    #else
-        fclose(f);
-    #endif
-        return false;
-    }
-
-    *buffer = malloc(*size);
-
-    if (!*buffer) {
-        l_error("file_load: Unable to allocate %d bytes of memory to load "
-                "the specified source file \"%s\".", path);
-    #ifdef USE_SCELIBC_IO
-        sceLibcBridge_fclose(f);
-    #else
-        fclose(f);
-    #endif
-        return false;
-    }
-
+    uint8_t *data=length>0 ? malloc((size_t)length) : NULL;
+    bool ok=false;
 #ifdef USE_SCELIBC_IO
-    sceLibcBridge_fread(*buffer, 1, *size, f);
-    sceLibcBridge_fclose(f);
+    if (data) ok=sceLibcBridge_fread(data,1,(size_t)length,f)==(size_t)length;
+    if (sceLibcBridge_fclose(f)!=0) ok=false;
 #else
-    fread(*buffer, 1, *size, f);
-    fclose(f);
+    if (data) ok=fread(data,1,(size_t)length,f)==(size_t)length;
+    if (fclose(f)!=0) ok=false;
 #endif
-
+    if (!ok) {
+        l_error("file_load: Incomplete/unreadable file or allocation failure: %s (%ld bytes).",path,length);
+        free(data); return false;
+    }
+    *buffer=data; *size=(size_t)length;
     return true;
 }
 
@@ -254,7 +220,10 @@ static bool file_save_sceio(const char *path, const uint8_t *buffer, size_t size
             written += (size_t)chunk;
         }
 
-        sceIoClose(fd);
+        if (sceIoClose(fd) < 0) {
+            l_error("file_save_sceio: Close failed for \"%s\".", open_path);
+            return false;
+        }
         if (open_path != path) {
             l_info("file_save_sceio: wrote \"%s\" via alternate path for \"%s\".", open_path, path);
         }
@@ -265,6 +234,7 @@ static bool file_save_sceio(const char *path, const uint8_t *buffer, size_t size
 }
 
 bool file_save(const char * path, const uint8_t * buffer, size_t size) {
+    if (!path || (!buffer && size)) { errno=EINVAL; return false; }
     if (!file_mkpath(path, 0755)) {
         l_error("file_save: Could not create parent directories for \"%s\".", path);
         return false;
@@ -286,14 +256,14 @@ bool file_save(const char * path, const uint8_t * buffer, size_t size) {
     }
 
 #ifdef USE_SCELIBC_IO
-    sceLibcBridge_fwrite(buffer, size, 1, f);
-    sceLibcBridge_fclose(f);
+    bool ok = sceLibcBridge_fwrite(buffer, 1, size, f) == size;
+    if (sceLibcBridge_fclose(f) != 0) ok = false;
 #else
-    fwrite(buffer, size, 1, f);
-    fclose(f);
+    bool ok = fwrite(buffer, 1, size, f) == size;
+    if (fclose(f) != 0) ok = false;
 #endif
-
-    return true;
+    if (!ok) l_error("file_save: Incomplete write/close for \"%s\" (storage full or unavailable).", path);
+    return ok;
 }
 
 size_t file_size(const char * path) {

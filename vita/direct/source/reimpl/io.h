@@ -69,12 +69,12 @@ typedef struct stat64_bionic {
     unsigned long long st_ino;
 } stat64_bionic;
 
-typedef struct __attribute__((__packed__)) dirent64_bionic {
-    int16_t d_ino; // 2 bytes // offset 0x0
-    int64_t d_off; // 8 bytes // offset 0x2
-    uint64_t d_reclen; // 8 bytes // 0xA
-    unsigned char d_type; // 1 byte // offset 0x12
-    char d_name[256]; // 256 bytes // offset 0x13
+typedef struct dirent64_bionic {
+    uint64_t d_ino;
+    int64_t d_off;
+    uint16_t d_reclen;
+    unsigned char d_type;
+    char d_name[256];
 } dirent64_bionic;
 
 int open_soloader(const char * path, int oflag, ...);

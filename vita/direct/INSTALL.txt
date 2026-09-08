@@ -1,5 +1,5 @@
-Plants vs Zombies 2 for PS Vita - private test candidate 6
-Build: 452-v1-rc6 | Game: 4.5.2 ROW (version 147)
+Plants vs Zombies 2 for PS Vita - 1.1 RC1 crash fix
+Build: 452-v1.1-rc1 | Game: 4.5.2 ROW (version 147)
 
 ALREADY INSTALLED?
 Install pvz2-vita-latest.vpk over the previous version. That's all.
@@ -45,20 +45,19 @@ launching the game again. runtime.log and jni.log in that folder may help.
 Each log is capped at 2 MiB plus one previous copy. If Vita generated a
 psp2core-...-eboot.bin.psp2dmp, keep that matching core dump as well.
 
-THIS CANDIDATE
-RC6 shares large texture conversions between the main thread and dedicated
-workers on available application cores.
-Alpha conversion uses a single pass with a smaller temporary buffer.
-Texture uploads now use the active unit's own format and size flags, fixing
-a bug that could affect loading assets. The new LiveArea and previous crash
-fix are retained. CPU checks pass; the loading flower and speed improvement
-still need a physical Vita comparison. Some scenes remain below 60 FPS.
+CHANGES IN 1.1 RC1
+Fixes the reported timezone crash and Android date-structure mismatch.
+Fixes an out-of-bounds storage query, unsafe end-of-directory handling,
+shared directory buffers and incomplete cache reads/writes.
+Storage queries now report real free space. A missing temporary source
+no longer deletes an existing destination during rename.
+Date/clock failures, malformed values and concurrent calls have regression
+coverage. These are CPU/ABI checks; this build still needs a physical Vita run.
 
-SHORT PRIVATE TEST
-1. Launch, watch the white loading flower, and enter/leave the level selector
-   twice. Note any flicker and whether the second visit loads faster.
-2. Play a normal level and the world-one Zomboss encounter; note any slowdown.
-3. Leave a menu idle, then resume touch; try the Vita keyboard and cancel.
-4. Finish a level, close/reopen the game and check your saved progress.
-5. Send userdata/loader.log with the build ID, level and what happened.
+AFTER UPDATING
+1. Boot and load your existing profile. Open the level selector and play a level.
+2. Leave a menu idle, resume touch, and try suspending/resuming the Vita.
+3. Finish a level, close/reopen the game and verify your progress.
+4. Keep userdata/loader.log with the result. Its build line must say 452-v1.1-rc1.
 Preserve logs before another launch if something fails; include any new dump.
+Back up userdata/ before testing. Existing game data does not need recopying.
