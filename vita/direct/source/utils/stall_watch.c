@@ -101,7 +101,7 @@ static int watch_main(unsigned args, void *argp) {
 }
 void pvz2_stall_start(void) {
     main_tid = sceKernelGetThreadId();
-    write_line("[BOOT] transition observer, 452-v1.1-rc3\n");
+    write_line("[BOOT] transition observer, 452-v1.1-rc4\n");
     SceUID tid = sceKernelCreateThread("pvz2_stall_watch", watch_main, 160, 16384, 0, 0x60000, NULL);
     int rc = tid < 0 ? tid : sceKernelStartThread(tid, 0, NULL);
     if (rc < 0) {

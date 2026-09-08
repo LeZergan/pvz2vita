@@ -93,3 +93,8 @@ establishing its blocked call. RC3 adds bounded resource counters to the existin
 reports to help distinguish a loading screen that still animates from a
 thread that stops completing frames. Neither successful builds nor isolated
 checks prove that every transition now succeeds on hardware.
+
+RC4 corrects another independently reproduced cleanup defect: `glIsProgram`
+was always true, allowing the game's cleanup to forward zero into vitaGL's
+unchecked program deletion. The new validity/deletion guards and preserved
+cache cleanup are covered by [the graphics cleanup regression](program-cleanup.md).

@@ -838,6 +838,7 @@ so_default_dynlib default_dynlib[] = {
         { "glDeleteFramebuffers", (uintptr_t)&glDeleteFramebuffers },
         { "glDeleteFramebuffersOES", (uintptr_t)&glDeleteFramebuffers },
         { "glDeleteProgram", (uintptr_t)&glDeleteProgram_soloader },
+        { "glIsProgram", (uintptr_t)&glIsProgram_soloader },
         { "glDeleteRenderbuffers", (uintptr_t)&glDeleteRenderbuffers },
         { "glDeleteRenderbuffersOES", (uintptr_t)&glDeleteRenderbuffers },
         { "glDeleteShader", (uintptr_t)&glDeleteShader },

@@ -1985,13 +1985,28 @@ void glBindTexture_soloader(GLenum target, GLuint texture) {
 #endif
 }
 
+GLboolean glIsProgram_soloader(GLuint program) {
+    if (!program) return GL_FALSE;
+#ifndef USE_PVR_PSP2
+    /* This vitaGL version indexes its fixed table without checking the handle.
+     * Zero underflows it, and out-of-range IDs read unrelated driver memory. */
+    if (program > PVZ2_VGL_PROGRAM_LIMIT) return GL_FALSE;
+#endif
+    return glIsProgram(program);
+}
+
 void glDeleteProgram_soloader(GLuint program) {
+    /* The game's cleanup can pass zero directly as well as query validity.
+     * Never let those calls reach the driver's unchecked program table. */
+    if (!program) return;
     program_caches_invalidate(program);
     if (g_uniform_current_program == program) {
         g_uniform_current_program = 0;
         g_last_mat4_have = 0;
     }
-    glDeleteProgram(program);
+    /* Clear our caches even if a loader-owned driver call already deleted the
+     * native object. The same numeric name may be allocated again later. */
+    if (glIsProgram_soloader(program)) glDeleteProgram(program);
 }
 
 void glUseProgram_soloader(GLuint program) {

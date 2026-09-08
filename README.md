@@ -28,8 +28,8 @@ No Android game files are included. You must supply your own matching
 **v1.0 is available.** The loader is very early in development. Expect slowdowns
 and possible crashes. See [known issues](#known-issues) and [release notes](docs/release-notes-v1.md).
 
-Current source includes **1.1 RC3 fixes** for missing runtime functions and
-worker stacks, alongside condition cleanup and time/storage fixes.
+Current source includes **1.1 RC4 fixes** for unsafe graphics cleanup, missing
+runtime functions and worker stacks, alongside condition and time/storage fixes.
 [Transition fixes and verification](docs/level-transition-stall.md). These
 changes still need a physical Vita replay of the reported stalls.
 

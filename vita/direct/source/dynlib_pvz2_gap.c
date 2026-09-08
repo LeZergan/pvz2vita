@@ -178,9 +178,8 @@ so_default_dynlib pvz2_gap_dynlib[] = {
     { "__dynamic_cast",       (uintptr_t)&ret0 },   /* TODO: libc++ provides real one */
     { "__emutls_get_address", (uintptr_t)&ret0 },   /* TODO: real emutls if TLS faults */
 
-    /* GLES the engine imports that dynlib.c lacked (vitaGL has them;
-     * ret1 = "valid" is a safe placeholder until wired to vitaGL). */
-    { "glIsProgram", (uintptr_t)&ret1 },
+    /* Remaining legacy shader validity stub. Program validity is implemented
+     * in dynlib.c; an unconditional true answer is unsafe for cleanup. */
     { "glIsShader",  (uintptr_t)&ret1 },
     { "gzread",      (uintptr_t)&ret0 },
 };

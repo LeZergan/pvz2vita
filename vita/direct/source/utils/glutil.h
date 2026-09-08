@@ -65,6 +65,10 @@ void glFramebufferTexture2D_soloader(GLenum target, GLenum attachment,
 void glViewport_soloader(GLint x, GLint y, GLsizei width, GLsizei height);
 void glScissor_soloader(GLint x, GLint y, GLsizei width, GLsizei height);
 void glUseProgram_soloader(GLuint program);
+/* Contract of the pinned vitaGL dependency; checked against the linked ELF by
+ * check-program-lifetime-arm.py before packaging. Native queries index i-1. */
+#define PVZ2_VGL_PROGRAM_LIMIT 1024u
+GLboolean glIsProgram_soloader(GLuint program);
 void glDeleteProgram_soloader(GLuint program);
 void glVertexAttribPointer_soloader(GLuint index, GLint size, GLenum type,
                                     GLboolean normalized, GLsizei stride,

@@ -426,7 +426,7 @@ int main(void) {
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
-    telemetry_log("BUILD", "452-v1.1-rc3 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc4 " __DATE__ " " __TIME__);
     int32_t epoch_probe = 6;
     bionic_tm local_epoch;
     if (bionic_localtime_r(&epoch_probe, &local_epoch))

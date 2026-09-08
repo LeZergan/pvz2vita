@@ -13,6 +13,12 @@ c='''
 typedef unsigned GLuint;
 typedef int GLint;
 typedef float GLfloat;
+typedef unsigned char GLboolean;
+#define GL_FALSE 0
+#define PVZ2_VGL_PROGRAM_LIMIT 1024u
+static unsigned query_calls;
+static GLboolean program_exists=1;
+static GLboolean glIsProgram(GLuint p) { assert(p && p<=1024); ++query_calls; return program_exists; }
 static unsigned deleted,linked,pvz2_program_link_us;
 static int g_last_mat4_have;
 static void glDeleteProgram(GLuint p) { deleted=p; }
@@ -23,7 +29,7 @@ static uint64_t sceKernelGetSystemTimeWide(void) { return 0; }
 '''
 c+=part('#define PROGRAM_CACHE_CAP','static GLint sole_mat4_location(')
 c+=part('static program_uniform_cache *program_cache_get(', 'static void program_cache_add_uniform(')
-c+=part('void glDeleteProgram_soloader(', 'void glUseProgram_soloader(')
+c+=part('GLboolean glIsProgram_soloader(', 'void glUseProgram_soloader(')
 c+=part('void glLinkProgram_soloader(', '#if defined(USE_GLSL_SHADERS) && defined(DUMP_COMPILED_SHADERS)')
 c+='''
 int main(void) {
@@ -49,6 +55,16 @@ int main(void) {
         assert(mat4_state_get(i)->program==i && program_cache_get(i,0)->program==i);
     }
     glDeleteProgram_soloader(0);
+    unsigned previous_calls=query_calls;
+    assert(!glIsProgram_soloader(0) && !glIsProgram_soloader(1025) && !glIsProgram_soloader(~0u));
+    glDeleteProgram_soloader(1025);glDeleteProgram_soloader(~0u);
+    assert(query_calls==previous_calls && deleted==7);
+    assert(glIsProgram_soloader(1024));
+    program_exists=0;deleted=0;
+    program_cache_get(7,1)->valid=1;
+    g_uniform_current_program=7;g_last_mat4_have=1;
+    glDeleteProgram_soloader(7);assert(!deleted);
+    assert(!program_cache_get(7,0) && !g_uniform_current_program && !g_last_mat4_have);
     assert(!program_cache_get(0,1));
     puts("PASS: program deletion/relink clears uniform locations and matrix recovery; ID reuse and cache eviction; repeated lookup fast paths");
 }

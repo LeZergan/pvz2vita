@@ -136,3 +136,15 @@ python3 scripts/check-imports-arm.py --game-lib /path/to/libPVZ2.so --loader-elf
 Pass `--old-loader-elf /path/to/rc2-loader.elf` to reproduce its missing imports
 and incorrect double return. The supplied library stays local. See
 [the audit and limitations](runtime-import-audit.md).
+
+RC4 also checks graphics program cleanup against the native library's actual
+program table and the original game's cleanup branches:
+
+```sh
+python3 scripts/check-program-lifetime-arm.py --game-lib /path/to/libPVZ2.so --loader-elf build-vita-direct/pvz2_loader
+```
+
+Optionally pass `--old-loader-elf /path/to/rc3-loader.elf` to reproduce invalid
+deletion first. This verifies the pinned SDK's 1024-program table limit used by
+the guard. Run it when replacing the vitaGL dependency; a different native table
+layout must be assessed before changing that limit. [Cleanup analysis](program-cleanup.md).

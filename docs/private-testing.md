@@ -1,4 +1,4 @@
-# 1.1 RC3 device check
+# 1.1 RC4 device check
 
 Install the new VPK over v1.0 and keep the game files and `userdata/`.
 Back up `userdata/` before testing. No data conversion or fresh save is required.
@@ -21,10 +21,15 @@ worker stack sizes, and supplies thread stack/priority query outputs.
 what remains unknown. All 25 local checks pass; this does not establish a fix
 for every physical Vita stall.
 
+RC4 fixes a further reproduced graphics cleanup bug: the old program-validity
+stub answered true for handle zero, allowing an unchecked driver deletion.
+Eight targeted checks pass on RC4, including the compiled game cleanup, native
+driver bounds, and earlier ARM regressions. See [graphics cleanup](program-cleanup.md).
+
 ## Device route
 
 1. Launch with your normal console timezone. Confirm the log build is
-   `452-v1.1-rc3`; `[IMPORTS] unresolved=0` confirms import resolution and the
+   `452-v1.1-rc4`; `[IMPORTS] unresolved=0` confirms import resolution and the
    `[TIME]` line records the actual offset and a successful
    epoch conversion into the 44-byte Android structure.
 2. Load the existing profile, finish Ancient Egypt level 2 and return to the map.
