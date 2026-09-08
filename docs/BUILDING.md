@@ -75,6 +75,8 @@ python3 scripts/check-filesystem-bridge.py
 python3 scripts/check-deadlines.py
 python3 scripts/check-stall-watch.py
 python3 scripts/check-thread-bridge.py
+python3 scripts/check-thread-attributes.py
+python3 scripts/check-import-resolver.py
 ```
 
 These compile the production functions with minimal system adapters. They
@@ -123,3 +125,14 @@ python3 scripts/check-cond-destroy-arm.py --loader-elf build-vita-direct/pvz2_lo
 Pass `--old-loader-elf /path/to/rc1-loader.elf` to reproduce the original leaked
 condition-list locks first. No game files are needed for this check.
 [Diagnosis and current device evidence](level-transition-stall.md).
+
+The RC3 import audit uses the actual linked import tables and executes the new
+math functions with their ARM calling convention:
+
+```sh
+python3 scripts/check-imports-arm.py --game-lib /path/to/libPVZ2.so --loader-elf build-vita-direct/pvz2_loader
+```
+
+Pass `--old-loader-elf /path/to/rc2-loader.elf` to reproduce its missing imports
+and incorrect double return. The supplied library stays local. See
+[the audit and limitations](runtime-import-audit.md).

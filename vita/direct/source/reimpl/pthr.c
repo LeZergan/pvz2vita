@@ -21,6 +21,7 @@
 #include <psp2/kernel/error.h>
 #include <sys/time.h>
 #include <stdatomic.h>
+#include <limits.h>
 
 #include "utils/utils.h"
 #include "utils/logger.h"
@@ -107,6 +108,10 @@ PTHR_INLINE int _attr_t_static_init(pthread_attr_t_bionic * attr) {
         int rc = pthread_attr_init(attr->real_ptr);
         if (rc) { free(attr->real_ptr); attr->real_ptr = NULL; return rc; }
         attr->magic = 0x42424242;
+        attr->stack_size = 0;
+        attr->reported_stack_base = 0;
+        attr->sched_policy = 0;
+        attr->sched_priority = 0;
     }
     return 0;
 }
@@ -195,6 +200,7 @@ PTHR_INLINE int _cond_t_static_init(pthread_cond_t_bionic * cond, const pthread_
 static atomic_int g_core3_mask = ATOMIC_VAR_INIT(0x00060000);
 #define WORKER_STATS_CAP 32
 static atomic_int worker_stats_ids[WORKER_STATS_CAP];
+static atomic_uintptr_t worker_stats_handles[WORKER_STATS_CAP];
 /* Read only once per telemetry interval, never on a game mutex operation. */
 void pvz2_threads_format_stats(char *out, size_t size) {
     static int previous_ids[WORKER_STATS_CAP];
@@ -266,7 +272,10 @@ static int worker_apply_affinity(SceUID self) {
 static void pvz2_worker_cleanup(void *arg) {
     int slot = *(int *)arg;
     pvz2_stall_thread_exit();
-    if (slot >= 0) atomic_store(&worker_stats_ids[slot], 0);
+    if (slot >= 0) {
+        atomic_store(&worker_stats_handles[slot], 0);
+        atomic_store(&worker_stats_ids[slot], 0);
+    }
 }
 static void *mcsm_thr_entry(void *arg) {
     mcsm_thr_wrap *w = (mcsm_thr_wrap *)arg;
@@ -285,6 +294,7 @@ static void *mcsm_thr_entry(void *arg) {
         int empty = 0;
         if (atomic_compare_exchange_strong(&worker_stats_ids[i], &empty, self)) {
             slot = (int)i;
+            atomic_store(&worker_stats_handles[i], (uintptr_t)pthread_self());
             break;
         }
     }
@@ -297,93 +307,49 @@ static void *mcsm_thr_entry(void *arg) {
 }
 
 int pthread_create_soloader(pthread_t *thread, const pthread_attr_t_bionic *attr, void *(*start)(void *), void *param) {
-    int ret;
-    const size_t default_stack = 128 * 1024;
-    const size_t min_stack = 64 * 1024;
-    size_t requested_stack = 0;
-    size_t stack_to_use = default_stack;
-    pthread_attr_t local_attr;
-    pthread_attr_t *real_attr = NULL;
-
-    if (!thread || !start) {
-        return bionic_pthread_result(EINVAL);
+    const size_t default_stack = 128 * 1024, min_stack = 64 * 1024;
+    if (!thread || !start) return bionic_pthread_result(EINVAL);
+    size_t requested = 0;
+    int detach = PTHREAD_CREATE_JOINABLE, rc;
+    struct sched_param priority;
+    pthread_attr_t local;
+    if (attr) {
+        rc = _attr_t_static_init((pthread_attr_t_bionic *)attr);
+        if (rc) return bionic_pthread_result(rc);
+        rc = pthread_attr_getstacksize(attr->real_ptr, &requested);
+        if (!rc) rc = pthread_attr_getdetachstate(attr->real_ptr, &detach);
+        if (!rc) rc = pthread_attr_getschedparam(attr->real_ptr, &priority);
+        if (rc) return bionic_pthread_result(rc);
     }
+    if (requested > INT_MAX) return bionic_pthread_result(EINVAL);
+    size_t stack = requested ? (requested < min_stack ? min_stack : requested) : default_stack;
+    rc = pthread_attr_init(&local);
+    if (rc) return bionic_pthread_result(rc);
+    rc = pthread_attr_setstacksize(&local, stack);
+    if (!rc) rc = pthread_attr_setdetachstate(&local, detach);
+    if (!rc && attr) rc = pthread_attr_setschedparam(&local, &priority);
+    if (rc) { pthread_attr_destroy(&local); return bionic_pthread_result(rc); }
 
-    if (!attr) {
-        ret = pthread_attr_init(&local_attr);
-        if (ret) return bionic_pthread_result(ret);
-        real_attr = &local_attr;
-    } else {
-        ret = _attr_t_static_init((pthread_attr_t_bionic *)attr);
-        if (ret) return bionic_pthread_result(ret);
-        real_attr = attr->real_ptr;
-    }
-
-    if (real_attr && pthread_attr_getstacksize(real_attr, &requested_stack) != 0) {
-        requested_stack = 0;
-    }
-
-    if (requested_stack >= min_stack && requested_stack <= default_stack) {
-        stack_to_use = requested_stack;
-    }
-
-    if (real_attr) {
-        pthread_attr_setstacksize(real_attr, stack_to_use);
-    }
-
-    /* Every successful creation must pass through affinity setup. Returning
-     * ENOMEM is preferable to silently running a worker on the rendering core. */
-    void *(*entry)(void *) = start;
-    void *entry_arg = param;
-    mcsm_thr_wrap *wrap = (mcsm_thr_wrap *)malloc(sizeof(mcsm_thr_wrap));
-    if (!wrap) {
-        if (!attr) pthread_attr_destroy(&local_attr);
-        return bionic_pthread_result(ENOMEM);
-    }
-    if (wrap) {
-        wrap->start = start;
-        wrap->param = param;
-        entry = mcsm_thr_entry;
-        entry_arg = wrap;
-    }
-
-    ret = pthread_create(thread, real_attr, entry, entry_arg);
-    if (ret != 0 && real_attr && stack_to_use > min_stack) {
-        pthread_attr_setstacksize(real_attr, min_stack);
-        stack_to_use = min_stack;
-        ret = pthread_create(thread, real_attr, entry, entry_arg);
-        l_warn("pthread_create retry with %u KB stack -> ret=%d", (unsigned)(min_stack / 1024), ret);
-    }
-
-    if (ret == EAGAIN && real_attr) {
-        // Resource pressure can be transient while worker threads bootstrap.
-        for (int i = 0; i < 8 && ret == EAGAIN; ++i) {
+    /* Copy settings into a local native attr. Creating a thread must not mutate
+     * an attr shared by callers, nor shrink an explicitly requested stack. */
+    mcsm_thr_wrap *wrap = malloc(sizeof(*wrap));
+    if (!wrap) { pthread_attr_destroy(&local); return bionic_pthread_result(ENOMEM); }
+    wrap->start = start; wrap->param = param;
+    rc = pthread_create(thread, &local, mcsm_thr_entry, wrap);
+    if (rc == EAGAIN) {
+        for (int i = 0; i < 3 && rc == EAGAIN; ++i) {
             sceKernelDelayThread(20000);
-            ret = pthread_create(thread, real_attr, entry, entry_arg);
-            if (ret == 0) {
-                l_warn("pthread_create recovered after %d EAGAIN retries", i + 1);
-                break;
-            }
+            rc = pthread_create(thread, &local, mcsm_thr_entry, wrap);
         }
     }
-
-    /* Reclaim the wrapper ONLY if no attempt ever started the thread; on
-     * success the new thread owns it and frees it in mcsm_thr_entry. */
-    if (ret != 0 && wrap && entry == mcsm_thr_entry) {
+    /* After successful creation the worker owns wrap and can already free it. */
+    if (rc) {
         free(wrap);
+        telemetry_log("THREAD_ERROR", "create start=%p stack=%u KiB error=%d",
+                      start, (unsigned)(stack / 1024), bionic_pthread_result(rc));
     }
-
-    /* On success the worker may already have freed param; never inspect it. */
-    if (ret != 0) {
-        l_warn("pthread_create(start=%p, stack=%u KB) failed ret=%d",
-               start, (unsigned)(stack_to_use / 1024), ret);
-    }
-
-    if (!attr) {
-        pthread_attr_destroy(&local_attr);
-    }
-
-    return bionic_pthread_result(ret);
+    pthread_attr_destroy(&local);
+    return bionic_pthread_result(rc);
 }
 
 int pthread_mutexattr_init_soloader(pthread_mutexattr_t *attr)
@@ -560,6 +526,7 @@ int pthread_attr_destroy_soloader(pthread_attr_t_bionic *attr)
 
     int ret = pthread_attr_destroy(attr->real_ptr);
     free(attr->real_ptr);
+    attr->real_ptr = NULL;
     attr->magic = 0x0;
 
     return bionic_pthread_result(ret);
@@ -567,30 +534,100 @@ int pthread_attr_destroy_soloader(pthread_attr_t_bionic *attr)
 
 int pthread_attr_setdetachstate_soloader(pthread_attr_t_bionic *attr, int state)
 {
-    if (!attr) return bionic_pthread_result(EINVAL);
+    if (!attr || (state != 0 && state != 1)) return bionic_pthread_result(EINVAL);
     int rc = _attr_t_static_init(attr);
     if (rc) return bionic_pthread_result(rc);
-    state = !state; // pthread-embedded has JOINABLE/DETACHED swapped compared to BIONIC...
+    state = state ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE;
     return bionic_pthread_result(pthread_attr_setdetachstate(attr->real_ptr, state));
 }
 
-int pthread_attr_setstacksize_soloader(pthread_attr_t_bionic *attr, size_t stacksize) {
-    if (!attr) return bionic_pthread_result(EINVAL);
+int pthread_attr_setstacksize_soloader(pthread_attr_t_bionic *attr, size_t size) {
+    if (!attr || size < 16384 || size > INT_MAX) return bionic_pthread_result(EINVAL);
     int rc = _attr_t_static_init(attr);
+    if (!rc) rc = pthread_attr_setstacksize(attr->real_ptr, size);
+    if (!rc) attr->stack_size = size;
+    return bionic_pthread_result(rc);
+}
+int pthread_attr_getstack_soloader(const pthread_attr_t_bionic *attr, void **stack, size_t *size) {
+    if (!attr || !stack || !size || attr->magic != 0x42424242) return bionic_pthread_result(EINVAL);
+    *stack = (void *)attr->reported_stack_base;
+    *size = attr->stack_size ? attr->stack_size : 128 * 1024;
+    return 0;
+}
+int pthread_attr_setstack_soloader(pthread_attr_t_bionic *attr, void *stack, size_t size) {
+    if (!attr || !stack || size < 16384 || size > INT_MAX) return bionic_pthread_result(EINVAL);
+    /* Vita kernel threads allocate their own stacks. Do not claim to run on
+     * caller-owned memory: callers can fall back to setstacksize. */
+    return bionic_pthread_result(ENOTSUP);
+}
+int pthread_attr_setschedpolicy_soloader(pthread_attr_t_bionic *attr, int policy) {
+    if (!attr || policy < 0 || policy > 2) return bionic_pthread_result(EINVAL);
+    /* pthread-embedded supports SCHED_OTHER; EA's callers retry this policy. */
+    if (policy != 0) return bionic_pthread_result(ENOTSUP);
+    int rc = _attr_t_static_init(attr);
+    if (!rc) attr->sched_policy = 0;
+    return bionic_pthread_result(rc);
+}
+int pthread_attr_setschedparam_soloader(pthread_attr_t_bionic *attr, const struct sched_param *param) {
+    if (!attr || !param || param->sched_priority != 0) return bionic_pthread_result(EINVAL);
+    int rc = _attr_t_static_init(attr);
+    if (!rc) attr->sched_priority = 0;
+    /* Android OTHER priority 0 corresponds to the SDK's default, not native 0
+     * (outside its 128..191 range). The native attr already retains that default. */
+    return bionic_pthread_result(rc);
+}
+int pthread_attr_getschedparam_soloader(const pthread_attr_t_bionic *attr, struct sched_param *param) {
+    if (!attr || !param || attr->magic != 0x42424242) return bionic_pthread_result(EINVAL);
+    param->sched_priority = attr->sched_priority;
+    return 0;
+}
+int pthread_getattr_np_soloader(pthread_t thread, pthread_attr_t_bionic *attr) {
+    if (!thread || !attr) return bionic_pthread_result(EINVAL);
+    int tid = -1;
+    if (pthread_equal(thread, pthread_self())) tid = sceKernelGetThreadId();
+    else for (unsigned i = 0; i < WORKER_STATS_CAP; ++i)
+        if (atomic_load(&worker_stats_handles[i]) == (uintptr_t)thread) {
+            tid = atomic_load(&worker_stats_ids[i]); break;
+        }
+    SceKernelThreadInfo info = {.size = sizeof(info)};
+    if (tid <= 0 || sceKernelGetThreadInfo(tid, &info) < 0) return bionic_pthread_result(ESRCH);
+    int rc = _attr_t_static_init(attr);
+    if (!rc) rc = pthread_attr_setstacksize(attr->real_ptr, info.stackSize);
+    if (!rc) {
+        attr->stack_size = info.stackSize;
+        attr->reported_stack_base = (uintptr_t)info.stack;
+    }
+    return bionic_pthread_result(rc);
+}
+int sched_get_priority_min_soloader(int policy) {
+    if (policy == 0) return 0;
+    if (policy == 1 || policy == 2) return 1;
+    errno = EINVAL; return -1;
+}
+int sched_get_priority_max_soloader(int policy) {
+    if (policy == 0) return 0;
+    if (policy == 1 || policy == 2) return 99;
+    errno = EINVAL; return -1;
+}
+int pthread_setschedparam_soloader(pthread_t thread, int policy, const struct sched_param *param) {
+    if (!param || policy < 0 || policy > 2) return bionic_pthread_result(EINVAL);
+    if (policy != 0) return bionic_pthread_result(ENOTSUP);
+    if (param->sched_priority != 0) return bionic_pthread_result(EINVAL);
+    pthread_attr_t attr;
+    struct sched_param native;
+    int rc = pthread_attr_init(&attr);
     if (rc) return bionic_pthread_result(rc);
-    return bionic_pthread_result(pthread_attr_setstacksize(attr->real_ptr, stacksize));
+    rc = pthread_attr_getschedparam(&attr, &native);
+    pthread_attr_destroy(&attr);
+    if (!rc) rc = pthread_setschedparam(thread, SCHED_OTHER, &native);
+    return bionic_pthread_result(rc);
 }
-
-int pthread_setschedparam_soloader(pthread_t thread, int policy,
-                                   const struct sched_param *param)
-{
-   return bionic_pthread_result(pthread_setschedparam(thread, policy, param));
-}
-
-int pthread_getschedparam_soloader(pthread_t thread, int *policy,
-                                   struct sched_param *param)
-{
-    return bionic_pthread_result(pthread_getschedparam(thread, policy, param));
+int pthread_getschedparam_soloader(pthread_t thread, int *policy, struct sched_param *param) {
+    if (!policy || !param) return bionic_pthread_result(EINVAL);
+    int native_policy; struct sched_param native;
+    int rc = pthread_getschedparam(thread, &native_policy, &native);
+    if (!rc) { *policy = 0; param->sched_priority = 0; }
+    return bionic_pthread_result(rc);
 }
 
 int pthread_detach_soloader(pthread_t thread)

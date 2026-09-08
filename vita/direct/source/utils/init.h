@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-void resolve_imports(so_module *mod);
+int resolve_imports(so_module *mod);
 
 void so_patch();
 

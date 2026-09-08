@@ -101,11 +101,11 @@ static int watch_main(unsigned args, void *argp) {
 }
 void pvz2_stall_start(void) {
     main_tid = sceKernelGetThreadId();
-    write_line("[BOOT] transition observer, 452-v1.1-rc2\n");
+    write_line("[BOOT] transition observer, 452-v1.1-rc3\n");
     SceUID tid = sceKernelCreateThread("pvz2_stall_watch", watch_main, 160, 16384, 0, 0x60000, NULL);
     int rc = tid < 0 ? tid : sceKernelStartThread(tid, 0, NULL);
     if (rc < 0) {
         if (tid >= 0) sceKernelDeleteThread(tid);
         telemetry_log("STALL_WATCH", "unavailable rc=0x%x", (unsigned)rc);
-    }
+    } else telemetry_log("STALL_WATCH", "active; snapshots after 5/15/30s without frames; file=" DATA_PATH "stall.log");
 }

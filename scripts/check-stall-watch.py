@@ -18,7 +18,7 @@ c=r'''
 typedef int SceUID;
 typedef struct { unsigned size; char name[32]; unsigned status,waitType,waitId;
     unsigned long long runClocks; unsigned currentCpuAffinityMask; } SceKernelThreadInfo;
-static char output[32000];static unsigned used,ticks,deleted,errors;
+static char output[32000];static unsigned used,ticks,deleted,errors,starts;
 static int tid=1,create_error,start_error;static jmp_buf stopped;
 static int sceKernelGetThreadId(void) { return tid; }
 static int sceKernelGetThreadInfo(int id,SceKernelThreadInfo *i) {
@@ -37,7 +37,10 @@ static int sceKernelCreateThread(const char *n,int(*f)(unsigned,void*),int p,int
 }
 static int sceKernelStartThread(int t,unsigned n,void*v) { return start_error ? -1 : 0; }
 static int sceKernelDeleteThread(int t) { ++deleted;return 0; }
-static void telemetry_log(const char *a,const char *b,...) { ++errors; }
+static void telemetry_log(const char *a,const char *b,...) {
+    if(strstr(b,"unavailable")) ++errors;
+    else { assert(strstr(b,"test/stall.log")); ++starts; }
+}
 static void sceKernelDelayThread(unsigned us) {
     assert(us==1000000);++ticks;
     if(ticks<5) pvz2_stall_frame(ticks,PVZ2_FRAME_DRAW);
@@ -50,7 +53,7 @@ static unsigned count(const char *text) {
     unsigned n=0;const char *p=output;while((p=strstr(p,text))){++n;p+=strlen(text);}return n;
 }
 int main(void) {
-    pvz2_stall_start();assert(!errors);
+    pvz2_stall_start();assert(!errors && starts==1);
     for(tid=2;tid<100;++tid) {
         pvz2_stall_wait(PVZ2_WAIT_COND,0x1234,0x98123456);
         assert(own_slot>=0);pvz2_stall_wait_done();pvz2_stall_thread_exit();

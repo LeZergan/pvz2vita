@@ -28,9 +28,10 @@ No Android game files are included. You must supply your own matching
 **v1.0 is available.** The loader is very early in development. Expect slowdowns
 and possible crashes. See [known issues](#known-issues) and [release notes](docs/release-notes-v1.md).
 
-Current source includes **1.1 RC2 fixes** for condition cleanup and Android
-thread errors, alongside the earlier time/storage fixes.
-[Transition fixes and verification](docs/level-transition-stall.md).
+Current source includes **1.1 RC3 fixes** for missing runtime functions and
+worker stacks, alongside condition cleanup and time/storage fixes.
+[Transition fixes and verification](docs/level-transition-stall.md). These
+changes still need a physical Vita replay of the reported stalls.
 
 ## Requirements
 
@@ -83,7 +84,7 @@ Back up `userdata/` to preserve your progress.
 4. Copy `ux0:data/pvz2/userdata/loader.log` off the Vita using VitaShell.
 5. Attach it to a [bug report](../../issues/new?template=bug-report.yml).
 
-Send the whole file. Include `runtime.log`, `jni.log` and a previous log copy if
+Send the whole file. Include `stall.log`, `runtime.log`, `jni.log` and a previous log copy if
 available. Each port log is capped at **2 MiB plus one previous copy**.
 
 For a crash, keep the matching `psp2core-…-eboot.bin.psp2dmp` for diagnosis.

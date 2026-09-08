@@ -28,3 +28,5 @@ jobs:
       - run: python scripts/check-deadlines.py
       - run: python scripts/check-stall-watch.py
       - run: python scripts/check-thread-bridge.py
+      - run: python scripts/check-thread-attributes.py
+      - run: python scripts/check-import-resolver.py

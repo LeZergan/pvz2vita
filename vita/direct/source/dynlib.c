@@ -30,6 +30,7 @@
 #include <wctype.h>
 #include <locale.h>
 #include <poll.h>
+#include <arpa/inet.h>
 
 #include <sys/stat.h>
 #include <sys/unistd.h>
@@ -46,6 +47,7 @@
 #include "utils/pvr_init.h"
 #endif
 #include "utils/logger.h"
+#include "utils/telemetry.h"
 
 #ifdef USE_SCELIBC_IO
 #include <libc_bridge/libc_bridge.h>
@@ -361,6 +363,34 @@ void glGetTexParameteriv(GLenum target, GLenum pname, GLint *params) {
 #endif
 
 so_default_dynlib default_dynlib[] = {
+    /* Complete the math/runtime imports used by the exact 4.5.2 library. */
+    { "acosh", (uintptr_t)&acosh_sf },
+    { "asinh", (uintptr_t)&asinh_sf },
+    { "atanh", (uintptr_t)&atanh_sf },
+    { "cbrt", (uintptr_t)&cbrt_sf },
+    { "cosh", (uintptr_t)&cosh_sf },
+    { "erf", (uintptr_t)&erf_sf },
+    { "erfc", (uintptr_t)&erfc_sf },
+    { "expm1", (uintptr_t)&expm1_sf },
+    { "hypot", (uintptr_t)&hypot_sf },
+    { "lgamma", (uintptr_t)&lgamma_sf },
+    { "llrint", (uintptr_t)&llrint_sf },
+    { "log1p", (uintptr_t)&log1p_sf },
+    { "logb", (uintptr_t)&logb_sf },
+    { "nearbyint", (uintptr_t)&nearbyint_sf },
+    { "nextafter", (uintptr_t)&nextafter_sf },
+    { "nextafterf", (uintptr_t)&nextafterf_sf },
+    { "remainder", (uintptr_t)&remainder_sf },
+    { "remquo", (uintptr_t)&remquo_sf },
+    { "scalbnl", (uintptr_t)&scalbnl_sf },
+    { "tgamma", (uintptr_t)&tgamma_sf },
+    { "__fpclassifyd", (uintptr_t)&fpclassifyd_sf },
+    { "__isfinite", (uintptr_t)&isfinite_sf },
+    { "__signbit", (uintptr_t)&signbit_sf },
+    { "__signbitf", (uintptr_t)&signbitf_sf },
+    { "isnan", (uintptr_t)&isnan_sf },
+    { "fputwc", (uintptr_t)&fputwc },
+    { "inet_addr", (uintptr_t)&inet_addr },
         // Common C/C++ internals
         { "_ZNSt8bad_castD1Ev", (uintptr_t)&_ZNSt8bad_castD1Ev },
         { "_ZNSt9exceptionD2Ev", (uintptr_t)&_ZNSt9exceptionD2Ev },
@@ -1049,11 +1079,16 @@ so_default_dynlib default_dynlib[] = {
 
 
         // Pthread
+        { "pthread_attr_getstack", (uintptr_t)&pthread_attr_getstack_soloader },
+        { "pthread_attr_setstack", (uintptr_t)&pthread_attr_setstack_soloader },
+        { "pthread_attr_setschedpolicy", (uintptr_t)&pthread_attr_setschedpolicy_soloader },
+        { "pthread_attr_getschedparam", (uintptr_t)&pthread_attr_getschedparam_soloader },
+        { "pthread_getattr_np", (uintptr_t)&pthread_getattr_np_soloader },
         { "pthread_attr_destroy", (uintptr_t)&pthread_attr_destroy_soloader },
         { "pthread_attr_init", (uintptr_t) &pthread_attr_init_soloader },
         { "pthread_attr_setdetachstate", (uintptr_t) &pthread_attr_setdetachstate_soloader },
         { "pthread_attr_setstacksize", (uintptr_t) &pthread_attr_setstacksize_soloader },
-        { "pthread_attr_setschedparam", (uintptr_t) &ret0 },
+        { "pthread_attr_setschedparam", (uintptr_t)&pthread_attr_setschedparam_soloader },
 
         { "pthread_condattr_init", (uintptr_t)&pthread_condattr_init_soloader },
         { "pthread_condattr_destroy", (uintptr_t)&pthread_condattr_destroy_soloader },
@@ -1101,8 +1136,8 @@ so_default_dynlib default_dynlib[] = {
         { "sem_trywait", (uintptr_t) &sem_trywait_soloader },
         { "sem_wait", (uintptr_t) &sem_wait_soloader },
 
-        { "sched_get_priority_max", (uintptr_t)&sched_get_priority_max },
-        { "sched_get_priority_min", (uintptr_t)&sched_get_priority_min },
+        { "sched_get_priority_max", (uintptr_t)&sched_get_priority_max_soloader },
+        { "sched_get_priority_min", (uintptr_t)&sched_get_priority_min_soloader },
         { "sched_yield", (uintptr_t)&sched_yield },
 
 
@@ -1501,7 +1536,7 @@ void *dlsym_soloader(void * handle, const char * symbol) {
     return r;
 }
 
-void resolve_imports(so_module* mod) {
+int resolve_imports(so_module* mod) {
     __sF_fake[0] = *stdin;
     __sF_fake[1] = *stdout;
     __sF_fake[2] = *stderr;
@@ -1522,9 +1557,15 @@ void resolve_imports(so_module* mod) {
         const int nd = (int)(sizeof(default_dynlib) / sizeof(default_dynlib[0]));
         combined_n = nd + pvz2_gap_dynlib_count;
         combined = (so_default_dynlib *)malloc((size_t)combined_n * sizeof(so_default_dynlib));
+        if (!combined) {
+            telemetry_log("IMPORT_ERROR", "cannot allocate import table");
+            return -1;
+        }
         memcpy(combined, default_dynlib, (size_t)nd * sizeof(so_default_dynlib));
         memcpy(combined + nd, pvz2_gap_dynlib,
                (size_t)pvz2_gap_dynlib_count * sizeof(so_default_dynlib));
     }
-    so_resolve(mod, combined, combined_n * (int)sizeof(so_default_dynlib), 0);
+    int result = so_resolve(mod, combined, combined_n * (int)sizeof(so_default_dynlib), 0);
+    telemetry_log("IMPORTS", "unresolved=%d (unknown calls never replaced by success stubs)", result);
+    return result;
 }

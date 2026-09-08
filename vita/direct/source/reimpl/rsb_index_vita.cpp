@@ -24,6 +24,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <atomic>
 
 namespace {
 #ifndef PVZ2_INDEX_PATH
@@ -49,6 +50,8 @@ pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 bool g_tried = false;
 bool g_loaded = false;
 std::unordered_map<std::string, Entry> g_entries;
+std::atomic<unsigned> g_queries{0}, g_misses{0}, g_cache_failures{0}, g_blocks_ready{0};
+std::atomic<unsigned> g_active_block{0}, g_written{0}, g_expected{0};
 
 uint32_t rd32(const std::vector<uint8_t> &bytes, size_t offset) {
     if (offset + 4 > bytes.size()) return 0;
@@ -316,11 +319,16 @@ static bool cache_block(Entry &entry) {
         return true;
     }
     std::string partial = std::string(path) + ".tmp";
+    g_active_block.store(entry.block_offset, std::memory_order_relaxed);
+    g_written.store(0, std::memory_order_relaxed);
+    g_expected.store(entry.unpacked_size, std::memory_order_relaxed);
     FILE *input = std::fopen(pvz2_obb_path(), "rb");
     FILE *output = std::fopen(partial.c_str(), "wb");
     if (!input || !output) {
         if (input) std::fclose(input);
         if (output) std::fclose(output);
+        g_active_block.store(0, std::memory_order_relaxed);
+        ++g_cache_failures;
         return false;
     }
     mz_stream stream = {};
@@ -352,6 +360,7 @@ static bool cache_block(Entry &entry) {
         if (std::fwrite(out.data(), 1, n, output) != n) { ok = false; break; }
         output_crc = mz_crc32(output_crc, out.data(), n);
         written += static_cast<uint32_t>(n);
+        g_written.store(written, std::memory_order_relaxed);
     }
     /* Include the archive's alignment padding in the source fingerprint. */
     while (ok && remaining) {
@@ -369,6 +378,8 @@ static bool cache_block(Entry &entry) {
         ok = std::rename(partial.c_str(), path) == 0;
     }
     if (!ok) {
+        g_active_block.store(0, std::memory_order_relaxed);
+        ++g_cache_failures;
         std::remove(partial.c_str());
         l_error("[rsb-cache] failed block=0x%x output=%u expected=%u z=%d",
                 entry.block_offset, written, entry.unpacked_size, result);
@@ -376,6 +387,8 @@ static bool cache_block(Entry &entry) {
     }
     entry.cache_path = path;
     g_block_cache.emplace(entry.block_offset, entry.cache_path);
+    g_active_block.store(0, std::memory_order_relaxed);
+    ++g_blocks_ready;
     /* Publish validation metadata only after the complete data file. Failure
      * to save metadata merely causes normal extraction next time. */
     const std::string meta = std::string(path) + ".meta";
@@ -414,6 +427,7 @@ extern "C" const char *vita_rsb_locate(const char *name, uint64_t *offset, uint3
 
 extern "C" int vita_rsb_find(const char *guest_path, uint64_t *offset,
                               uint32_t *size, int *compressed) {
+    ++g_queries;
     pthread_mutex_lock(&g_lock);
     if (!g_tried) {
         g_tried = true;
@@ -431,7 +445,15 @@ extern "C" int vita_rsb_find(const char *guest_path, uint64_t *offset,
         }
     }
     pthread_mutex_unlock(&g_lock);
+    if (!result && guest_path && *guest_path) ++g_misses;
     return result;
+}
+
+/* No index lock: telemetry must keep running while a worker extracts a block. */
+extern "C" void vita_rsb_format_stats(char *out, size_t capacity) {
+    std::snprintf(out, capacity, "queries=%u misses=%u extracted=%u errors=%u active=0x%x bytes=%u/%u",
+        g_queries.load(), g_misses.load(), g_blocks_ready.load(), g_cache_failures.load(),
+        g_active_block.load(), g_written.load(), g_expected.load());
 }
 
 extern "C" const char *vita_rsb_obb_path(void) {

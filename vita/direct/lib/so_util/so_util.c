@@ -19,7 +19,7 @@
 #include "utils/telemetry.h"
 #include "so_util.h"
 
-int __ret0(void);  /* defined below; used by so_resolve's unresolved-symbol path */
+int __ret0(void);  /* Explicit legacy dummy resolver only. */
 
 #ifndef SCE_KERNEL_MEMBLOCK_TYPE_USER_RX
 #define SCE_KERNEL_MEMBLOCK_TYPE_USER_RX                 (0x0C20D050)
@@ -476,6 +476,7 @@ __attribute__((naked)) void plt0_stub()
 
 int so_resolve(so_module *mod, so_default_dynlib *default_dynlib, int size_default_dynlib, int default_dynlib_only) {
     uintptr_t val;
+    int missing = 0;
     for (int i = 0; i < mod->num_reldyn + mod->num_relplt; i++) {
         Elf32_Rel *rel = i < mod->num_reldyn ? &mod->reldyn[i] : &mod->relplt[i - mod->num_reldyn];
         Elf32_Sym *sym = &mod->dynsym[ELF32_R_SYM(rel->r_info)];
@@ -489,12 +490,13 @@ int so_resolve(so_module *mod, so_default_dynlib *default_dynlib, int size_defau
             {
                 if (sym->st_shndx == SHN_UNDEF) {
                     int resolved = 0;
+                    const uintptr_t addend = type == R_ARM_ABS32 ? *ptr : 0;
                     if (!default_dynlib_only) {
                         uintptr_t link = so_resolve_link(mod, mod->dynstr + sym->st_name);
                         if (link) {
                             sceClibPrintf("Resolved from dependencies: %s\n", mod->dynstr + sym->st_name);
                             if (type == R_ARM_ABS32) {
-                                val = *ptr + link;
+                                val = addend + link;
                                 kuKernelCpuUnrestrictedMemcpy(ptr, &val, sizeof(uintptr_t));
                             } else {
                                 val = link;
@@ -506,7 +508,7 @@ int so_resolve(so_module *mod, so_default_dynlib *default_dynlib, int size_defau
 
                     for (int j = 0; j < size_default_dynlib / sizeof(so_default_dynlib); j++) {
                         if (strcmp(mod->dynstr + sym->st_name, default_dynlib[j].symbol) == 0) {
-                            val = default_dynlib[j].func;
+                            val = addend + default_dynlib[j].func;
                             kuKernelCpuUnrestrictedMemcpy(ptr, &val, sizeof(uintptr_t));
                             resolved = 1;
                             break;
@@ -514,15 +516,12 @@ int so_resolve(so_module *mod, so_default_dynlib *default_dynlib, int size_defau
                     }
 
                     if (!resolved) {
-                        /* Bring-up: don't hard-crash on a missing symbol. Point
-                         * unresolved JUMP_SLOTs at __ret0 (call returns 0) and
-                         * LOG the name, so the loader survives and loader.log
-                         * lists exactly what was missing instead of dying on the
-                         * first call to it. (Was: *ptr = &plt0_stub -> fatal
-                         * "Unknown symbol ???".) */
-                        sceClibPrintf("Unresolved import (dummied->ret0): %s\n", mod->dynstr + sym->st_name);
-                        if (type == R_ARM_JUMP_SLOT) {
-                            *ptr = (uintptr_t)&__ret0;
+                        if (ELF32_ST_BIND(sym->st_info) == STB_WEAK) {
+                            val = addend;
+                            kuKernelCpuUnrestrictedMemcpy(ptr, &val, sizeof(val));
+                        } else {
+                            if (missing++ < 32)
+                                telemetry_log("IMPORT_MISSING", "%s", mod->dynstr + sym->st_name);
                         }
                     }
                 }
@@ -534,7 +533,7 @@ int so_resolve(so_module *mod, so_default_dynlib *default_dynlib, int size_defau
         }
     }
 
-    return 0;
+    return missing;
 }
 
 int __ret0() {

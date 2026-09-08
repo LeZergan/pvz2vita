@@ -182,7 +182,7 @@ static int load_exact_452(void) {
 
     result = so_relocate(&so_mod_pvz2);
     if (result != 0) return result;
-    resolve_imports(&so_mod_pvz2);
+    if (resolve_imports(&so_mod_pvz2) != 0) return -3;
     extern int placement452_install(so_module *);
     if (placement452_install(&so_mod_pvz2) != 0) {
         telemetry_log("FATAL", "4.5.2 placement grid patch fingerprint mismatch");
@@ -382,6 +382,8 @@ static void run_60fps_loop(void) {
             fjni_ref_stats(&live, &created, &freed);
             struct mallinfo heap = mallinfo();
             char audio[192];
+            char assets[144];
+            vita_rsb_format_stats(assets, sizeof(assets));
             extern void opensl_format_stats(char *, size_t);
             opensl_format_stats(audio, sizeof(audio));
             char shaders[112];
@@ -402,7 +404,7 @@ static void run_60fps_loop(void) {
             telemetry_log("60FPS", "frame=%u measured=%u.%02u fps\n"
                 "[PERF] avg_us input=%u game=%u present=%u max=%u over18ms=%u/300 JNI_live=%u created=%u freed=%u heap_used=%u KiB\n"
                 "[RENDER] sampled_draw_us=%u upload_us=%u uploads=%u\n"
-                "[GPU] free KiB vram=%u ram=%u slow=%u\n[AUDIOQ] %s\n[SHADERS] %s\n[THREADS] %s\n[TOUCH] %s\n[PIXELS] %s",
+                "[GPU] free KiB vram=%u ram=%u slow=%u\n[AUDIOQ] %s\n[SHADERS] %s\n[THREADS] %s\n[TOUCH] %s\n[PIXELS] %s\n[ASSETIO] %s",
                 frame, fps_x100 / 100u, fps_x100 % 100u,
                 (unsigned)(pump_us / 300), (unsigned)(draw_us / 300),
                 (unsigned)(present_us / 300), peak_us, slow_frames,
@@ -410,7 +412,7 @@ static void run_60fps_loop(void) {
                 sampled_draw, upload, uploads,
                 (unsigned)(vglMemFree(VGL_MEM_VRAM) / 1024),
                 (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024),
-                (unsigned)(vglMemFree(VGL_MEM_SLOW) / 1024), audio, shaders, threads, touch_stats, pixels);
+                (unsigned)(vglMemFree(VGL_MEM_SLOW) / 1024), audio, shaders, threads, touch_stats, pixels, assets);
             pump_us = draw_us = present_us = 0;
             peak_us = slow_frames = 0;
             sample_start = now;
@@ -424,7 +426,7 @@ int main(void) {
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
-    telemetry_log("BUILD", "452-v1.1-rc2 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc3 " __DATE__ " " __TIME__);
     int32_t epoch_probe = 6;
     bionic_tm local_epoch;
     if (bionic_localtime_r(&epoch_probe, &local_epoch))
@@ -481,6 +483,8 @@ int main(void) {
     log_memory_stage("before library load");
     int load_result = load_exact_452();
     if (load_result != 0) {
+        if (load_result == -3)
+            fatal_error("This VPK could not resolve the game's Android runtime calls.\nInstall the latest VPK.\n\nMissing call names are in:\nux0:data/pvz2/userdata/loader.log\n\nYour saves have not been changed.");
         log_memory_stage("library load failed");
         telemetry_log("FATAL", "load/relocate/resolve failed");
         fatal_error("Cannot load the game library. Error: 0x%08x\n\nClose other apps and reboot your Vita.\nReinstall this VPK if the error continues.\n\nKeep ux0:data/pvz2/userdata/loader.log for support.", (unsigned)load_result);

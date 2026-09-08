@@ -1,4 +1,4 @@
-# 1.1 RC2 device check
+# 1.1 RC3 device check
 
 Install the new VPK over v1.0 and keep the game files and `userdata/`.
 Back up `userdata/` before testing. No data conversion or fresh save is required.
@@ -11,17 +11,26 @@ does not identify the blocked call. RC2 fixes a reproduced SDK condition-lock
 leak, condition attributes and Android pthread errors, and adds bounded stall
 snapshots. See [the transition diagnosis](level-transition-stall.md).
 
-RC2 passes isolated ARM and source checks; its level transitions still need
-physical Vita confirmation.
+The newer Zen Garden ZIP is an RC2 run ending after frame 26,400. It contains
+only `loader.log`; the separate wait snapshots are missing. Workers were active
+on both cores 1/2 and the audio queue showed no starvation before reporting stopped.
+
+RC3 additionally resolves 32 previously missing imports, preserves requested
+worker stack sizes, and supplies thread stack/priority query outputs.
+[The runtime audit](runtime-import-audit.md) records what was reproduced and
+what remains unknown. All 25 local checks pass; this does not establish a fix
+for every physical Vita stall.
 
 ## Device route
 
 1. Launch with your normal console timezone. Confirm the log build is
-   `452-v1.1-rc2`; the new `[TIME]` line records the actual offset and a successful
+   `452-v1.1-rc3`; `[IMPORTS] unresolved=0` confirms import resolution and the
+   `[TIME]` line records the actual offset and a successful
    epoch conversion into the 44-byte Android structure.
 2. Load the existing profile, finish Ancient Egypt level 2 and return to the map.
    Play several levels consecutively without restarting; include another level
    that previously stalled.
+   Enter and leave Zen Garden several times, including after completing a level.
 3. Leave a menu idle, resume touch, and suspend/resume the Vita.
 4. Play Ancient Egypt Zomboss and a busy wave when available.
 5. Finish a level, close/reopen the game and verify saved progress.
@@ -36,3 +45,8 @@ attach proprietary game files or private saves to a public source issue.
 a frame report confirms completed helper work; zero is normal when no texture
 conversion was needed. `[THREADS]` reports kernel runtime and affinity samples.
 Compare FPS on the same save and scene; the ABI checks do not measure Vita FPS.
+
+`[ASSETIO]` shows resource requests and cache extraction progress without taking
+the resource lock. If the flower continues animating while loading never ends,
+these reports can distinguish progressing extraction from an unchanged resource
+state. The separate stall observer reports when completed frames stop instead.

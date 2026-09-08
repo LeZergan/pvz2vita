@@ -15,6 +15,18 @@
 extern "C" {
 #endif
 
+SOFTFP_ABI double acosh_sf(double x), asinh_sf(double x), atanh_sf(double x);
+SOFTFP_ABI double cbrt_sf(double x), cosh_sf(double x), erf_sf(double x), erfc_sf(double x);
+SOFTFP_ABI double expm1_sf(double x), lgamma_sf(double x), log1p_sf(double x), logb_sf(double x);
+SOFTFP_ABI double nearbyint_sf(double x), tgamma_sf(double x);
+SOFTFP_ABI double hypot_sf(double x,double y), nextafter_sf(double x,double y), remainder_sf(double x,double y);
+SOFTFP_ABI float nextafterf_sf(float x,float y);
+SOFTFP_ABI long long llrint_sf(double x);
+SOFTFP_ABI double remquo_sf(double x,double y,int *q);
+SOFTFP_ABI long double scalbnl_sf(long double x,int n);
+SOFTFP_ABI int fpclassifyd_sf(double x), isfinite_sf(double x), isnan_sf(double x), signbit_sf(double x);
+SOFTFP_ABI int signbitf_sf(float x);
+
 /* float(float) */
 SOFTFP_ABI float  acosf_sf(float x);
 SOFTFP_ABI float  asinf_sf(float x);

@@ -76,3 +76,20 @@ matching Vita core dump. Do not erase the save to test this fix.
 
 The vendored correction retains the LGPL notice and license. Device logs, core
 dumps, game data and local build symbols are excluded from the source export.
+
+## RC3 follow-up
+
+An audit of the exact linked RC2 image found 32 missing runtime imports. The
+resolver silently used an integer-zero stub for them, including double-valued
+math and thread attribute functions with output pointers. RC3 supplies the
+missing functions and stops at boot if a strong import is unresolved. It also
+removes the 128 KiB cap on explicitly requested worker stacks. See the
+[compiled import audit](runtime-import-audit.md) for the reproductions and limits.
+
+The newer Zen Garden report contains an RC2 log ending after frame 26,400.
+Its final report has workers running on both cores 1/2 and no audio starvation;
+the separate `stall.log` is absent. It confirms a reported stall on RC2 without
+establishing its blocked call. RC3 adds bounded resource counters to the existing frame
+reports to help distinguish a loading screen that still animates from a
+thread that stops completing frames. Neither successful builds nor isolated
+checks prove that every transition now succeeds on hardware.

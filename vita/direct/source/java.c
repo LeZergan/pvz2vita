@@ -1,6 +1,7 @@
 #include "utils/boot_check.h"
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -924,9 +925,9 @@ static jobject ResourcesGetAssetFileInfo(jmethodID id, va_list a) {
     const char *container = vita_rsb_locate(name, &offset, &size);
     if (!container || !out) {
         if (out) jni->SetLongArrayRegion(&jni, out, 0, 2, info);
-        static unsigned misses = 0;
-        if (misses++ < 48)
-            l_info("[asset] '%s' -> %s", name,
+        static atomic_uint misses = 0;
+        if (atomic_fetch_add(&misses, 1) < 24)
+            telemetry_log("ASSET_MISS", "'%.200s' -> %s", name,
                    !container ? "NOT READABLE IN RSB" : "no out array");
         return NULL;
     }

@@ -23,15 +23,20 @@ extern "C" {
 
 #include <pthread.h>
 #include <semaphore.h>
+#include <stdint.h>
 
 typedef struct {
     pthread_attr_t *real_ptr; // replaces `uint32_t flags;`
     int32_t magic; // replaces `void * stack_base;`
     size_t stack_size;
-    size_t guard_size;
+    uintptr_t reported_stack_base; // queried Vita stack; replaces Android guard_size
     int32_t sched_policy;
     int32_t sched_priority;
 } pthread_attr_t_bionic;
+
+#if defined(__arm__)
+typedef char pvz2_android_attr_size_check[(sizeof(pthread_attr_t_bionic) == 24) ? 1 : -1];
+#endif
 
 typedef struct {
     pthread_mutex_t *real_ptr; // replaces `int volatile value;`
@@ -80,6 +85,14 @@ int pthread_attr_init_soloader(pthread_attr_t_bionic *attr);
 int pthread_attr_destroy_soloader(pthread_attr_t_bionic *attr);
 int pthread_attr_setdetachstate_soloader(pthread_attr_t_bionic *attr, int state);
 int pthread_attr_setstacksize_soloader(pthread_attr_t_bionic *attr, size_t stacksize);
+int pthread_attr_getstack_soloader(const pthread_attr_t_bionic *attr, void **stack, size_t *size);
+int pthread_attr_setstack_soloader(pthread_attr_t_bionic *attr, void *stack, size_t size);
+int pthread_attr_getschedparam_soloader(const pthread_attr_t_bionic *attr, struct sched_param *param);
+int pthread_attr_setschedparam_soloader(pthread_attr_t_bionic *attr, const struct sched_param *param);
+int pthread_attr_setschedpolicy_soloader(pthread_attr_t_bionic *attr, int policy);
+int pthread_getattr_np_soloader(pthread_t thread, pthread_attr_t_bionic *attr);
+int sched_get_priority_min_soloader(int policy);
+int sched_get_priority_max_soloader(int policy);
 
 int pthread_setname_np_soloader(pthread_t thread, const char *thread_name);
 

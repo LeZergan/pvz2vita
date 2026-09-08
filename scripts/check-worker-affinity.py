@@ -14,6 +14,7 @@ c=r'''
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <limits.h>
 #include <stdatomic.h>
 #include "reimpl/pthr.h"
 #define bionic_pthread_result(e) (e)
@@ -23,8 +24,10 @@ typedef int SceUID;
 static atomic_int g_core3_mask=0x60000;
 #define WORKER_STATS_CAP 32
 static atomic_int worker_stats_ids[WORKER_STATS_CAP];
+static atomic_uintptr_t worker_stats_handles[WORKER_STATS_CAP];
 static _Thread_local int actual_mask=0x10000;
 static int allowed_mask=0x60000, lying, fail_alloc, create_calls;
+static size_t observed_stack;
 static atomic_int executed, observed;
 static int sceKernelGetThreadId(void) { return 1; }
 static int sceKernelGetThreadCpuAffinityMask(int t) { return actual_mask; }
@@ -38,6 +41,7 @@ static void telemetry_log(const char *tag,const char *fmt,...) {}
 #define l_warn(...) ((void)0)
 static void *checked_malloc(size_t n) { if(fail_alloc) return NULL; return malloc(n); }
 static int counted_create(pthread_t *t,const pthread_attr_t *a,void *(*f)(void *),void *v) {
+    assert(!pthread_attr_getstacksize(a,&observed_stack));
     ++create_calls; return pthread_create(t,a,f,v);
 }
 #define malloc checked_malloc
@@ -94,6 +98,14 @@ int main(void) {
     pthread_attr_t_bionic attr={0};
     assert(_attr_t_static_init(&attr)==ENOMEM && !attr.magic && !attr.real_ptr);
     fail_alloc=0;
+    assert(!_attr_t_static_init(&attr));
+    assert(!pthread_attr_setstacksize(attr.real_ptr,512*1024));
+    assert(!pthread_create_soloader(&threads[0],&attr,job,malloc(8)));
+    assert(observed_stack==512*1024);
+    assert(!pthread_join(threads[0],&result));
+    size_t unchanged;
+    assert(!pthread_attr_getstacksize(attr.real_ptr,&unchanged) && unchanged==512*1024);
+    pthread_attr_destroy(attr.real_ptr);free(attr.real_ptr);
     puts("PASS: normal/unlocked core counts; verified mask and core-3/single-core fallbacks; failed affinity detection; actual host worker launch through affinity wrapper; OOM never bypasses wrapper");
 }
 '''

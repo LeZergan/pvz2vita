@@ -121,6 +121,11 @@ int main(int argc,char **argv) {
  if(!strcmp(argv[2],"warm"))assert(reused==1&&extracted==0);else assert(reused==0&&extracted==1);
  assert(vita_rsb_locate("images/768/initial/effects/load_icon_back/load_icon_back.pam",&offset,&size));
  assert(offset==0x2000&&size==10949&&reused+extracted==1);
+ char stats[180];
+ pthread_mutex_lock(&g_lock);
+ vita_rsb_format_stats(stats,sizeof(stats)); // Must not reacquire the resource lock.
+ pthread_mutex_unlock(&g_lock);
+ assert(strstr(stats,"queries=") && strstr(stats,"errors=0") && strstr(stats,"active=0x0"));
  // Different archive bytes, even at identical block offset/length, reject reuse.
  const char *old_archive=archive;archive="other-source.bin";
  FILE *f=fopen(archive,"wb");assert(f);fclose(f);

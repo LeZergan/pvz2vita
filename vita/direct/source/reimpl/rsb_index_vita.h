@@ -2,6 +2,7 @@
 #define PVZ2_VITA_RSB_INDEX_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +22,7 @@ const char *vita_rsb_locate(const char *guest_path, uint64_t *offset, uint32_t *
 const char *vita_rsb_obb_path(void);
 /* Read-only index construction overlaps boot on a verified worker core. */
 void vita_rsb_start_preload(void);
+void vita_rsb_format_stats(char *out, size_t capacity);
 
 #ifdef __cplusplus
 }
