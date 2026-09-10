@@ -12,6 +12,13 @@ def function(text, signature):
     start=text.index(signature)
     return text[start:text.index('\n}',start)+3]
 work=Path(tempfile.mkdtemp(prefix='jni-unicode-',dir=root/'out'))
+# The Vita-only varargs bridge returns va_list, which is an array on Linux
+# x86_64. This fixture only exercises strings, so omit that unrelated prototype
+# from a local header copy; all tested implementations and types stay intact.
+header=(lib/'FalsoJNI_ImplBridge.h').read_text(encoding='utf-8')
+prototype='va_list _AtoV(int dummy, ...);'
+assert prototype in header
+(work/'FalsoJNI_ImplBridge.h').write_text(header.replace(prototype,''),encoding='utf-8')
 prefix=r'''
 #include <stdint.h>
 #include <stdio.h>
