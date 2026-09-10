@@ -15,6 +15,14 @@ extern "C" {
 void telemetry_reset(void);
 void telemetry_log(const char *tag, const char *fmt, ...)
                    __attribute__((format(printf, 2, 3)));
+/* Frame-loop producer only. Drops reports when the observer is unavailable or
+ * backed up; startup and critical messages still use telemetry_log directly. */
+void telemetry_report(const char *tag, const char *fmt, ...)
+                      __attribute__((format(printf, 2, 3)));
+void telemetry_reports_enable(void);
+void telemetry_reports_drain(void);
+/* Best-effort observer mirror; never waits for the normal logger's mutex. */
+int telemetry_try_line(const char *line);
 int telemetry_success_count(void);
 const char *telemetry_last_path(void);
 

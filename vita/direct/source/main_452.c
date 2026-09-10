@@ -32,6 +32,7 @@
 #include "utils/stall_watch.h"
 #include "utils/pixel_workers.h"
 #include "utils/text_field_452.h"
+#include "utils/input_replay.h"
 #include "utils/boot_check.h"
 #include "utils/dialog.h"
 #include "reimpl/rsb_index_vita.h"
@@ -348,6 +349,9 @@ static void run_60fps_loop(void) {
         const uint64_t begin = sceKernelGetSystemTimeWide();
         controls_tick(begin);
         if (!pvz2_numeric_poll()) controls_poll();
+#if PVZ2_INPUT_REPLAY
+        pvz2_input_replay_tick(begin);
+#endif
         pvz2_stall_frame(frame, PVZ2_FRAME_PUMP);
         pump(&jni, (jclass)1);
         const uint64_t pumped = sceKernelGetSystemTimeWide();
@@ -386,7 +390,7 @@ static void run_60fps_loop(void) {
             vita_rsb_format_stats(assets, sizeof(assets));
             extern void opensl_format_stats(char *, size_t);
             opensl_format_stats(audio, sizeof(audio));
-            char shaders[112];
+            char shaders[192];
             extern void pvz2_gl_shader_stats(char *, size_t);
             pvz2_gl_shader_stats(shaders, sizeof(shaders));
             char threads[176];
@@ -399,9 +403,8 @@ static void run_60fps_loop(void) {
             unsigned sampled_draw, upload, uploads;
             extern void pvz2_gl_profile_stats(unsigned *, unsigned *, unsigned *);
             pvz2_gl_profile_stats(&sampled_draw, &upload, &uploads);
-            /* One bounded write per report, rather than opening/flushing the
-             * memory card separately for every line on the rendering thread. */
-            telemetry_log("60FPS", "frame=%u measured=%u.%02u fps\n"
+            /* Snapshot on the render thread; storage writes run on the observer. */
+            telemetry_report("60FPS", "frame=%u measured=%u.%02u fps\n"
                 "[PERF] avg_us input=%u game=%u present=%u max=%u over18ms=%u/300 JNI_live=%u created=%u freed=%u heap_used=%u KiB\n"
                 "[RENDER] sampled_draw_us=%u upload_us=%u uploads=%u\n"
                 "[GPU] free KiB vram=%u ram=%u slow=%u\n[AUDIOQ] %s\n[SHADERS] %s\n[THREADS] %s\n[TOUCH] %s\n[PIXELS] %s\n[ASSETIO] %s",
@@ -426,7 +429,16 @@ int main(void) {
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
-    telemetry_log("BUILD", "452-v1.1-rc4 " __DATE__ " " __TIME__);
+#if PVZ2_INPUT_REPLAY
+    telemetry_log("BUILD", "452-v1.1-rc11-INPUT-REPLAY " __DATE__ " " __TIME__);
+    telemetry_log("DIAGNOSTIC", "bounded native input replay; cloned profiles only; NOT a release build");
+#elif PVZ2_STRESS_READ_KIB > 0 || PVZ2_STRESS_READ_LATENCY_US > 0
+    telemetry_log("BUILD", "452-v1.1-rc11-IO-STRESS " __DATE__ " " __TIME__);
+    telemetry_log("DIAGNOSTIC", "artificial per-read delay: %u KiB/s plus %u us; NOT a release build",
+                  PVZ2_STRESS_READ_KIB, PVZ2_STRESS_READ_LATENCY_US);
+#else
+    telemetry_log("BUILD", "452-v1.1-rc11 " __DATE__ " " __TIME__);
+#endif
     int32_t epoch_probe = 6;
     bionic_tm local_epoch;
     if (bionic_localtime_r(&epoch_probe, &local_epoch))

@@ -23,6 +23,7 @@ static unsigned deleted,linked,pvz2_program_link_us;
 static int g_last_mat4_have;
 static void glDeleteProgram(GLuint p) { deleted=p; }
 static void glLinkProgram(GLuint p) { linked=p; }
+static void shader_pairs_link(GLuint p) { glLinkProgram(p); }
 static void log_program_link_failure(GLuint p) {}
 static uint64_t sceKernelGetSystemTimeWide(void) { return 0; }
 #define launch_state_mark_gl_phase(...) ((void)0)

@@ -19,6 +19,7 @@
 
 #include <string.h>
 #include <malloc.h>
+#include "jni_string_codec.h"
 #include <pthread.h>
 
 #include "converter.h"
@@ -395,7 +396,8 @@ JavaDynArray * jda_alloc(jsize len, FIELD_TYPE type) {
         return NULL;
     }
 
-    void * array = malloc(len * getFieldTypeSize(type));
+    size_t bytes = (size_t)len * getFieldTypeSize(type);
+    void * array = malloc(bytes ? bytes : 1);
     if (!array) {
         return NULL;
     }
@@ -425,7 +427,10 @@ jboolean jda_realloc(JavaDynArray * jda, jsize len) {
     if (!jda || jda->magic != JDA_MAGIC || len < 0)
         return JNI_FALSE;
 
-    void * res = realloc(jda->array, len * getFieldTypeSize(jda->type));
+    size_t bytes = (size_t)len * getFieldTypeSize(jda->type);
+    /* realloc(ptr, 0) may free ptr and return NULL, which would leave a dangling
+     * array on the failure path. Empty JNI arrays still have a valid backing. */
+    void * res = realloc(jda->array, bytes ? bytes : 1);
     if (res == NULL) {
         return JNI_FALSE;
     }
@@ -447,40 +452,47 @@ jboolean jda_free(JavaDynArray * jda) {
 }
 
 jboolean jstr_utf16_to_utf8(JavaString * jstr) {
-    if (!jstr) return JNI_FALSE;
+    if (!jstr || !jstr->utf16) return JNI_FALSE;
+    size_t bytes = fjni_mutf8_encode(jstr->utf16->array, (size_t)jstr->utf16->len, NULL);
+    if (bytes >= INT_MAX) return JNI_FALSE;
 
     if (jstr->utf8 == NULL) {
-        jstr->utf8 = jda_alloc(jstr->utf16->len+1, FIELD_TYPE_BYTE);
+        jstr->utf8 = jda_alloc((jsize)bytes + 1, FIELD_TYPE_BYTE);
         if (jstr->utf8 == NULL) {
             return JNI_FALSE;
         }
-    } else if (jstr->utf8->len < jstr->utf16->len+1) {
-        if (jda_realloc(jstr->utf8, jstr->utf16->len+1) == JNI_FALSE) {
+    } else if (jstr->utf8->len != (jsize)bytes + 1) {
+        if (jda_realloc(jstr->utf8, (jsize)bytes + 1) == JNI_FALSE) {
             return JNI_FALSE;
         }
     }
 
-    utf16_to_utf8(jstr->utf16->array, jstr->utf16->len, jstr->utf8->array, jstr->utf8->len);
+    fjni_mutf8_encode(jstr->utf16->array, (size_t)jstr->utf16->len, jstr->utf8->array);
 
     char * arr = jstr->utf8->array;
-    arr[jstr->utf8->len - 1] = '\0';
+    arr[bytes] = '\0';
     return JNI_TRUE;
 }
 
 jboolean jstr_utf8_to_utf16(JavaString * jstr) {
     if (!jstr) return JNI_FALSE;
 
-    if (jstr->utf8 == NULL) {
+    if (jstr->utf8 == NULL || jstr->utf8->len < 1) {
         return JNI_FALSE;
     }
 
-    if (jstr->utf16->len + 1 < jstr->utf8->len) {
-        if (jda_realloc(jstr->utf16, jstr->utf8->len - 1) == JNI_FALSE) {
+    size_t units = fjni_mutf8_decode(jstr->utf8->array, (size_t)jstr->utf8->len - 1, NULL);
+    if (units > INT_MAX) return JNI_FALSE;
+    if (!jstr->utf16) {
+        jstr->utf16 = jda_alloc((jsize)units, FIELD_TYPE_CHAR);
+        if (!jstr->utf16) return JNI_FALSE;
+    } else if (jstr->utf16->len != (jsize)units) {
+        if (jda_realloc(jstr->utf16, (jsize)units) == JNI_FALSE) {
             return JNI_FALSE;
         }
     }
 
-    utf8_to_utf16(jstr->utf8->array, jstr->utf8->len - 1, jstr->utf16->array, jstr->utf16->len);
+    fjni_mutf8_decode(jstr->utf8->array, (size_t)jstr->utf8->len - 1, jstr->utf16->array);
 
     return JNI_TRUE;
 }

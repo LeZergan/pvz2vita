@@ -98,3 +98,41 @@ RC4 corrects another independently reproduced cleanup defect: `glIsProgram`
 was always true, allowing the game's cleanup to forward zero into vitaGL's
 unchecked program deletion. The new validity/deletion guards and preserved
 cache cleanup are covered by [the graphics cleanup regression](program-cleanup.md).
+
+## RC5: endless flower loading report
+
+The newly supplied `loader.zip` identifies RC4, built September 9 at 02:18:26.
+It ends after frame 27,000 at 35.21 FPS, heap usage 102,591 KiB and graphics
+RAM free 127,725 KiB. Audio reports no full queue or empty waits. The archive
+contains only loader.log. The user describes endless flower loading on every
+load; whether frames continue during the failure is not conclusively recorded.
+These samples do not establish the blocked operation or an allocation failure.
+
+RC5 fixes a separate reproducible audio queue defect. Clear waited for `busy`
+to become false, but the consumer left that flag set through the user callback.
+If the clearer held a lock needed by the callback, both waited forever. The
+consumer now releases the borrowed PCM and clears `busy` before the callback.
+Clear still waits for actual PCM output, and object destruction still joins
+the consumer. The production audio regression fails with the prior code and
+passes with RC5, including in-flight output, queue state, stop and destruction.
+This is not proof that this lock cycle caused the supplied game's stall; its
+recorded callback was disassembled and no external mutex call was identified.
+
+RC5 also closes two evidence gaps. Once every 30 seconds with advancing frames,
+the observer records a SAMPLE of worker state; this does not label normal idle
+workers as deadlocked. Hard freezes retain the 5/15/30-second STALL snapshots.
+Native semaphore, mutex, GPU-finish, read and positioned-read wrappers retain
+the native caller alongside the outer Android wait. They cover SDK, graphics
+and pixel-worker calls that bypass the Android bridge. Native instrumentation
+avoids emulated TLS, which could otherwise recurse through malloc's lock.
+Exited native-only thread slots can be reclaimed.
+
+The independent bounded stall.log is written first; the observer mirrors lines
+to loader.log only if its logger mutex can be acquired without waiting. Both
+logs should still be retained. A game load succeeding on RC5 remains unverified.
+Leave a failing load for 60 seconds and preserve both logs before relaunching.
+
+The additional `(1).psp2dmp` attachment has SHA-256
+`259a29cc5276bc3fda45eb7e36c658109bcb60bab6555e106222721a804fd494`,
+identical to the earlier `1788920884` dump. It is the old UTC-3 date crash,
+covered by the current [time regression](time-crash.md), not fresh RC4 evidence.

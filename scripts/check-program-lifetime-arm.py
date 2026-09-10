@@ -50,6 +50,12 @@ class Replay:
         for name in ('sceGxmFinish','vgl_free','telemetry_log'):
             fn=self.syms[name]
             u.mem_write(fn&~1,bytes.fromhex('00207047') if fn&1 else struct.pack('<II',0xe3a00000,0xe12fff1e))
+        # Native wait telemetry is verified separately; do not enter kernel
+        # thread queries in this isolated GPU-lifetime fixture.
+        for name in ('pvz2_stall_native_wait','pvz2_stall_native_done'):
+            if name in self.syms:
+                fn=self.syms[name]
+                u.mem_write(fn&~1,bytes.fromhex('00207047') if fn&1 else struct.pack('<II',0xe3a00000,0xe12fff1e))
         self.entries={self.syms[n]&~1:n for n in ('glIsProgram','glDeleteProgram','sceGxmFinish','vgl_free','telemetry_log')}
         u.hook_add(UC_HOOK_CODE,self.hook)
         u.hook_add(UC_HOOK_MEM_WRITE,self.write)

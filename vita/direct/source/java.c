@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -680,8 +681,11 @@ static char g_cfg_keys[CFG_MAX][96];
 static char g_cfg_vals[CFG_MAX][256];
 static int  g_cfg_count = 0;
 static int  g_cfg_loaded = 0;
+static pthread_mutex_t g_cfg_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void cfg_load(void) {
+/* All table access is serialized. In particular, first use must not publish
+ * an empty/partially read store to another engine thread. */
+static void cfg_load_locked(void) {
     if (g_cfg_loaded) return;
     g_cfg_loaded = 1;
     FILE *f = fopen(CFG_KV_PATH, "rb");
@@ -702,52 +706,76 @@ static void cfg_load(void) {
     l_info("[CFG] loaded %d keys from %s", g_cfg_count, CFG_KV_PATH);
 }
 
-static void cfg_save(void) {
+static int cfg_save_locked(void) {
     FILE *f = fopen(CFG_KV_PATH, "wb");
-    if (!f) { l_warn("[CFG] save failed"); return; }
+    if (!f) { l_warn("[CFG] save failed"); return 0; }
+    int ok = 1;
     for (int i = 0; i < g_cfg_count; i++)
-        fprintf(f, "%s\t%s\n", g_cfg_keys[i], g_cfg_vals[i]);
-    fclose(f);
+        if (fprintf(f, "%s\t%s\n", g_cfg_keys[i], g_cfg_vals[i]) < 0) { ok = 0; break; }
+    if (fclose(f) != 0) ok = 0;
+    if (!ok) l_warn("[CFG] save failed while writing");
+    return ok;
 }
 
-static int cfg_find(const char *key) {
+static int cfg_find_locked(const char *key) {
     for (int i = 0; i < g_cfg_count; i++)
         if (strcmp(g_cfg_keys[i], key) == 0) return i;
     return -1;
 }
 
-static void cfg_set(const char *key, const char *val) {
-    cfg_load();
-    int i = cfg_find(key);
+/* Return a copy so JNI allocation/conversion runs after releasing the lock. */
+static int cfg_get(const char *key, char *value, size_t size) {
+    pthread_mutex_lock(&g_cfg_lock);
+    cfg_load_locked();
+    int i = cfg_find_locked(key);
+    if (value && size) snprintf(value, size, "%s", i >= 0 ? g_cfg_vals[i] : "");
+    pthread_mutex_unlock(&g_cfg_lock);
+    return i >= 0;
+}
+
+static int cfg_set(const char *key, const char *val) {
+    pthread_mutex_lock(&g_cfg_lock);
+    cfg_load_locked();
+    int i = cfg_find_locked(key);
     if (i < 0) {
-        if (g_cfg_count >= CFG_MAX) { l_warn("[CFG] table full, dropping %s", key); return; }
+        if (g_cfg_count >= CFG_MAX) {
+            pthread_mutex_unlock(&g_cfg_lock);
+            l_warn("[CFG] table full, dropping %s", key);
+            return 0;
+        }
         i = g_cfg_count++;
         snprintf(g_cfg_keys[i], sizeof(g_cfg_keys[0]), "%s", key);
     }
     snprintf(g_cfg_vals[i], sizeof(g_cfg_vals[0]), "%s", val);
-    cfg_save();
+    int ok = cfg_save_locked();
+    pthread_mutex_unlock(&g_cfg_lock);
+    return ok;
 }
 
-/* Offline gate flags the game polls KeyExists() on forever, waiting for an async
- * online op (that never completes offline) to create them. It only checks their
- * EXISTENCE (never reads the value), so pre-seeding unblocks the loading screen.
- * wctgc = the flag that hung boot at ~frame 3300 (3440 polls). Add more here if
- * a new KeyExists() spin appears. */
-static void cfg_seed_gate(const char *key) {
-    if (cfg_find(key) < 0 && g_cfg_count < CFG_MAX) {
-        snprintf(g_cfg_keys[g_cfg_count], sizeof(g_cfg_keys[0]), "%s", key);
-        snprintf(g_cfg_vals[g_cfg_count], sizeof(g_cfg_vals[0]), "1");
-        g_cfg_count++;
+static void cfg_erase(const char *key) {
+    pthread_mutex_lock(&g_cfg_lock);
+    cfg_load_locked();
+    int i = cfg_find_locked(key);
+    if (i >= 0) {
+        --g_cfg_count;
+        if (i != g_cfg_count) {
+            memcpy(g_cfg_keys[i], g_cfg_keys[g_cfg_count], sizeof(g_cfg_keys[0]));
+            memcpy(g_cfg_vals[i], g_cfg_vals[g_cfg_count], sizeof(g_cfg_vals[0]));
+        }
+        cfg_save_locked();
     }
+    pthread_mutex_unlock(&g_cfg_lock);
 }
+
+/* Offline gate flags retain their existing JNI behavior below; synchronization
+ * does not seed flags or complete any pending operation. */
 
 /* Kept for main.c's extern; no longer used for stack-walking (that diagnostic
  * done — it overran the stack on a shallow call and crashed). */
 uintptr_t g_pvz2_text_base_for_diag = 0;
 extern void *g_fjni_bool_caller;   /* set by FalsoJNI CallBooleanMethod* = game call site */
 static jboolean ConfigKeyExists(jmethodID id, va_list a) {
-    (void)id; cfg_load();
-    (void)cfg_seed_gate;   /* wctgc seed removed; see wctgc handling below */
+    (void)id;
     char key[96]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
     /* wctgc = the per-frame loading-screen gate. (1) Force it ABSENT — bypass the
      * persisted store (which still holds wctgc=1 from earlier seeded runs) to test
@@ -758,35 +786,32 @@ static jboolean ConfigKeyExists(jmethodID id, va_list a) {
      * here OVERRAN the stack on a shallow call and data-aborted (ConfigKeyExists+0x10e)
      * — the native chain was already captured, so it's removed. */
     if (strcmp(key, "wctgc") == 0) return JNI_FALSE;
-    int found = cfg_find(key) >= 0;
+    int found = cfg_get(key, NULL, 0);
     l_debug("[CFG] KeyExists(%s) = %d", key, found);
     return found ? JNI_TRUE : JNI_FALSE;
 }
 static jobject ConfigReadString(jmethodID id, va_list a) {
-    (void)id; cfg_load();
-    char key[96]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
-    int i = cfg_find(key);
-    if (i < 0) {
+    (void)id;
+    char key[96], value[256]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
+    if (!cfg_get(key, value, sizeof(value))) {
         /* Match Android SharedPreferences.getString(key, null): an absent key
          * is JNI null, which is distinct from a present empty string. */
         l_debug("[CFG] ReadString(%s) = <null>", key);
         return NULL;
     }
-    l_debug("[CFG] ReadString(%s) = '%s'", key, g_cfg_vals[i]);
-    return ret_string(g_cfg_vals[i]);
+    l_debug("[CFG] ReadString(%s) = '%s'", key, value);
+    return ret_string(value);
 }
 static jint ConfigReadInteger(jmethodID id, va_list a) {
-    (void)id; cfg_load();
-    char key[96]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
-    int i = cfg_find(key);
-    return (i >= 0) ? (jint)strtol(g_cfg_vals[i], NULL, 10) : 0;
+    (void)id;
+    char key[96], value[256]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
+    return cfg_get(key, value, sizeof(value)) ? (jint)strtol(value, NULL, 10) : 0;
 }
 static jboolean ConfigReadBoolean(jmethodID id, va_list a) {
-    (void)id; cfg_load();
-    char key[96]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
-    int i = cfg_find(key);
-    if (i < 0) return JNI_FALSE;
-    return (strcmp(g_cfg_vals[i], "1") == 0 || strcmp(g_cfg_vals[i], "true") == 0) ? JNI_TRUE : JNI_FALSE;
+    (void)id;
+    char key[96], value[256]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
+    if (!cfg_get(key, value, sizeof(value))) return JNI_FALSE;
+    return (strcmp(value, "1") == 0 || strcmp(value, "true") == 0) ? JNI_TRUE : JNI_FALSE;
 }
 static jboolean ConfigWriteString(jmethodID id, va_list a) {
     (void)id;
@@ -794,44 +819,33 @@ static jboolean ConfigWriteString(jmethodID id, va_list a) {
     jstr_to_path(va_arg(a, jstring), key, sizeof(key));
     jstr_to_path(va_arg(a, jstring), val, sizeof(val));
     l_info("[CFG] WriteString(%s, '%s')", key, val);
-    cfg_set(key, val);
-    return JNI_TRUE;
+    return cfg_set(key, val) ? JNI_TRUE : JNI_FALSE;
 }
 static jboolean ConfigWriteInteger(jmethodID id, va_list a) {
     (void)id;
     char key[96], val[32];
     jstr_to_path(va_arg(a, jstring), key, sizeof(key));
     snprintf(val, sizeof(val), "%d", va_arg(a, jint));
-    cfg_set(key, val);
-    return JNI_TRUE;
+    return cfg_set(key, val) ? JNI_TRUE : JNI_FALSE;
 }
 static jboolean ConfigWriteBoolean(jmethodID id, va_list a) {
     (void)id;
     char key[96]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
     int v = va_arg(a, jint);  /* jboolean promotes to int in varargs */
-    cfg_set(key, v ? "1" : "0");
-    return JNI_TRUE;
+    return cfg_set(key, v ? "1" : "0") ? JNI_TRUE : JNI_FALSE;
 }
 static void ConfigEraseKey(jmethodID id, va_list a) {
-    (void)id; cfg_load();
+    (void)id;
     char key[96]; jstr_to_path(va_arg(a, jstring), key, sizeof(key));
-    int i = cfg_find(key);
-    if (i >= 0) {
-        g_cfg_count--;
-        if (i != g_cfg_count) {
-            memcpy(g_cfg_keys[i], g_cfg_keys[g_cfg_count], sizeof(g_cfg_keys[0]));
-            memcpy(g_cfg_vals[i], g_cfg_vals[g_cfg_count], sizeof(g_cfg_vals[0]));
-        }
-        cfg_save();
-    }
+    cfg_erase(key);
 }
 /* Glu string store — same backing store, "ss:" prefix to avoid collisions. */
 static jobject StringStoreGet(jmethodID id, va_list a) {
-    (void)id; cfg_load();
-    char key[96] = "ss:";
+    (void)id;
+    char key[96] = "ss:", value[256];
     jstr_to_path(va_arg(a, jstring), key + 3, sizeof(key) - 3);
-    int i = cfg_find(key);
-    return ret_string(i >= 0 ? g_cfg_vals[i] : "");
+    cfg_get(key, value, sizeof(value));
+    return ret_string(value);
 }
 static void StringStoreSet(jmethodID id, va_list a) {
     (void)id;
@@ -859,11 +873,11 @@ static jboolean CheckPrivateDirectoryExists(jmethodID id, va_list a) {
     return JNI_FALSE;
 }
 static jobject ReadSharedProperty(jmethodID id, va_list a) {
-    (void)id; cfg_load();
-    char key[96] = "sp:";
+    (void)id;
+    char key[96] = "sp:", value[256];
     jstr_to_path(va_arg(a, jstring), key + 3, sizeof(key) - 3);
-    int i = cfg_find(key);
-    return ret_string(i >= 0 ? g_cfg_vals[i] : "");
+    cfg_get(key, value, sizeof(value));
+    return ret_string(value);
 }
 
 /* Analytics/identity IDs. The Glu Tags/config system QUEUES every getTag until

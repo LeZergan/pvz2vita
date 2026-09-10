@@ -177,6 +177,11 @@ static void *opensl_audio_thread(void *arg) {
         p->head = (p->head + 1) % 64;
         --p->count;
         ++p->completed_serial;
+        /* The borrowed PCM is no longer in use. A caller clearing the queue
+         * may hold a game lock needed by its callback, so do not make Clear
+         * wait for user code. Object destruction still joins this thread. */
+        p->busy = 0;
+        pthread_cond_broadcast(&p->changed);
         pthread_mutex_unlock(&p->mutex);
         unsigned begin = (unsigned)sceKernelGetSystemTimeWide();
         opensl_call_queue_callback(p);
@@ -184,8 +189,6 @@ static void *opensl_audio_thread(void *arg) {
         unsigned prior = atomic_load(&stat_callback_max);
         if (elapsed > prior) atomic_store(&stat_callback_max, elapsed);
         pthread_mutex_lock(&p->mutex);
-        p->busy = 0;
-        pthread_cond_broadcast(&p->changed);
     }
     int destroy = p->destroy_on_exit;
     pthread_mutex_unlock(&p->mutex);

@@ -1,5 +1,5 @@
-Plants vs Zombies 2 for PS Vita - 1.1 RC1 crash fix
-Build: 452-v1.1-rc1 | Game: 4.5.2 ROW (version 147)
+Plants vs Zombies 2 for PS Vita - 1.1 RC11 shader reuse and smoother reporting
+Build: 452-v1.1-rc11 | Game: 4.5.2 ROW (version 147)
 
 ALREADY INSTALLED?
 Install pvz2-vita-latest.vpk over the previous version. That's all.
@@ -40,24 +40,63 @@ IF SOMETHING GOES WRONG
 Boot checks identify missing plugins, wrong/incomplete game files and
 unwritable save folders, with instructions on screen. Fix the reported
 problem and relaunch. The port never resets your saves to fix setup.
-For other failures, preserve ux0:data/pvz2/userdata/loader.log before
-launching the game again. runtime.log and jni.log in that folder may help.
+For infinite flower loading, leave the app there for 60 seconds, then keep
+ux0:data/pvz2/userdata/loader.log and stall.log before launching again.
+The observer captures worker samples while the flower animates as well as hard freezes.
+Snapshots are mirrored to loader.log when its writer is available.
 Each log is capped at 2 MiB plus one previous copy. If Vita generated a
 psp2core-...-eboot.bin.psp2dmp, keep that matching core dump as well.
 
-CHANGES IN 1.1 RC1
-Fixes the reported timezone crash and Android date-structure mismatch.
-Fixes an out-of-bounds storage query, unsafe end-of-directory handling,
-shared directory buffers and incomplete cache reads/writes.
-Storage queries now report real free space. A missing temporary source
-no longer deletes an existing destination during rename.
-Date/clock failures, malformed values and concurrent calls have regression
-coverage. These are CPU/ABI checks; this build still needs a physical Vita run.
+CHANGES IN 1.1 RC11
+Reuses matching shader pairs already compiled during the current session to
+avoid compiling them again. Moves periodic loader.log writes off the game
+thread so slow storage cannot hold up a frame report. Keeps the RC10 texture
+worker fix. Install this VPK over your current version; keep all game data.
+The latest RC10 log reaches 15,300 frames without a stall report, but shows
+shader hitches around 0.6 seconds and separate busy-gameplay FPS drops.
+RC11 targets the shader and logging hitches. First-time shader compilation
+still occurs; hardware FPS improvement has not yet been measured.
+
+RETAINED FROM 1.1 RC10
+The RC9 hardware log identified the render thread stuck waiting for texture
+workers that had returned to waiting for another job. RC10 replaces that
+condition-variable handoff with per-worker kernel notifications and an atomic
+completion counter. It keeps parallel texture conversion. Lost notifications
+no longer prevent completion, and a buffer is returned only after all workers
+finish writing. Hardware confirmation of the fix is still required.
+
+EARLIER CHANGES IN 1.1 RC8
+Removes a repeated kernel thread-ID lookup and table scan from each monitored
+wait. Retains worker snapshots, wait arguments, errors and timeout behavior.
+Compiled ARM checks confirm less diagnostic work. Controlled emulator title
+timing did not establish a gameplay or Vita FPS improvement.
+
+RETAINED FROM 1.1 RC7
+Fixes reproduced Unicode truncation and incorrect character/byte lengths in
+the Java string bridge. String reads now use complete immutable buffers,
+avoiding repeated conversion. Fixes cleanup when reference tracking cannot
+allocate memory. These fixes pass host and compiled ARM regressions.
+
+RETAINED FROM 1.1 RC6
+Fixes a reproduced race where concurrent configuration reads could see an
+incomplete store during startup. Serializes reads, writes and erases, and
+reports configuration write failures to the game. Keeps the existing file
+format, missing/empty value behavior and offline flag handling.
+The reported endless flower has not yet been reproduced in Vita3K. These
+configuration fixes are not proof that every loading problem is resolved.
+
+RETAINED FROM 1.1 RC5
+Fixes a reproduced audio Clear/callback lock cycle while preserving the wait
+for in-flight PCM output and the destruction join. Retains earlier time,
+storage, import, worker-stack, condition teardown and program cleanup fixes.
+Adds native semaphore/mutex/GPU/file-read wait evidence to worker snapshots.
+The supplied RC4 endless-loading report has no blocked-call snapshot. This
+build has passed isolated regressions; fixing every load is NOT yet verified.
 
 AFTER UPDATING
 1. Boot and load your existing profile. Open the level selector and play a level.
 2. Leave a menu idle, resume touch, and try suspending/resuming the Vita.
 3. Finish a level, close/reopen the game and verify your progress.
-4. Keep userdata/loader.log with the result. Its build line must say 452-v1.1-rc1.
+4. Keep userdata/loader.log and stall.log. The build line must say 452-v1.1-rc10.
 Preserve logs before another launch if something fails; include any new dump.
 Back up userdata/ before testing. Existing game data does not need recopying.

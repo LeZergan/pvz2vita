@@ -18,6 +18,15 @@ def function(name):
 c=r'''
 #include <assert.h>
 #include <string.h>
+/* This texture-state fixture uses the synchronous conversion fallback. The
+ * separate pixel-worker suite exercises real concurrent host notifications. */
+typedef int SceUID;
+#define SCE_KERNEL_ERROR_WAIT_TIMEOUT (-110)
+static int sceKernelCreateSema(const char *name,int attr,int initial,int maximum,void *options) { return -1; }
+static int sceKernelDeleteSema(SceUID id) { return 0; }
+static int sceKernelWaitSema(SceUID id,int count,unsigned *timeout) { assert(0); return -110; }
+static int sceKernelSignalSema(SceUID id,int count) { assert(0); return -1; }
+static int sceKernelDelayThread(unsigned us) { assert(0); return 0; }
 #include "utils/pixel_workers.c"
 #include "utils/texture_marks.h"
 int pthread_create_soloader(pthread_t *t,const pthread_attr_t_bionic *a,void *(*f)(void *),void *v) { return 1; }

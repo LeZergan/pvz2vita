@@ -3,6 +3,7 @@
 No emulator, windows, desktop control or audio output. Vita calls are mocked.
 """
 from pathlib import Path
+import argparse
 import re
 import shutil
 import subprocess
@@ -10,6 +11,10 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 src = root / 'vita/direct/source'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--audio-source', type=Path, default=src/'reimpl/opensl_audio.c',
+                    help='Optional preserved audio source for before/after regression')
+args = parser.parse_args()
 work = Path(tempfile.mkdtemp(prefix='audio-input-', dir=root / 'out'))
 sdk = Path('C:/Users/Max/tools/vitasdk/arm-vita-eabi/include')
 shutil.copytree(sdk / 'SLES', work / 'SLES')
@@ -53,7 +58,7 @@ static void sceImeDialogAbort(void) { ime_status=2; }
 static void sceImeDialogTerm(void) { ime_status=0; }
 void controls_release_for_dialog(void) { ++releases; }
 ''', encoding='utf-8')
-source = (src / 'reimpl/opensl_audio.c').read_text(encoding='utf-8')
+source = args.audio_source.read_text(encoding='utf-8')
 ids = sorted(set(re.findall(r'\bSL_IID_[A-Z]+\b', source)))
 test = r'''
 #include <assert.h>
@@ -65,6 +70,8 @@ test = r'''
 void telemetry_log(const char *t,const char *f,...) {}
 void _log_print(int t,const char *f,...) {}
 static atomic_uint submitted, callbacks, block_output, entered_output;
+static atomic_uint callback_entered, callback_left;
+static pthread_mutex_t game_audio_lock = PTHREAD_MUTEX_INITIALIZER;
 static PcmBlocks pcm;
 static int16_t recorded[16384];
 static unsigned recorded_n, block_size=1024, channels=2;
@@ -83,6 +90,12 @@ void audio_output_i16_frames(const int16_t *data,int frames,int ch) {
     atomic_fetch_add(&submitted,1);
 }
 static void done(SLBufferQueueItf q,void *ctx) {atomic_fetch_add(&callbacks,1);}
+static void locked_done(SLBufferQueueItf q,void *ctx) {
+    atomic_store(&callback_entered,1);
+    pthread_mutex_lock(&game_audio_lock);
+    pthread_mutex_unlock(&game_audio_lock);
+    atomic_store(&callback_left,1);
+}
 static void wait_for(atomic_uint *a,unsigned wanted) {
     for(unsigned i=0;i<1000 && atomic_load(a)<wanted;++i) usleep(1000);
     assert(atomic_load(a)>=wanted);
@@ -122,6 +135,25 @@ static void test_queue(void) {
     atomic_store(&block_output,0); pthread_join(clearer,NULL);
     assert(atomic_load(&cleared));
     player_bq_get_state(NULL,&state); assert(state.count==0 && state.playIndex==0);
+    /* A scene teardown can hold its audio lock while clearing borrowed PCM.
+     * Clear must wait for output, but not for user callback completion: that
+     * callback may need the lock held by the clearer. */
+    pthread_mutex_lock(&game_audio_lock);
+    player_bq_register_callback(NULL,locked_done,NULL);
+    assert(player_enqueue_common(g_player,buffer,1024)==SL_RESULT_SUCCESS);
+    wait_for(&callback_entered,1);
+    atomic_store(&cleared,0);
+    assert(!pthread_create(&clearer,NULL,clear_thread,&cleared));
+    for(unsigned i=0;i<100 && !atomic_load(&cleared);++i)usleep(1000);
+    if(!atomic_load(&cleared)) {
+        fputs("FAIL: Clear waits for callback blocked on the caller's lock\n",stderr);
+        _Exit(2);
+    }
+    pthread_join(clearer,NULL);
+    assert(!atomic_load(&callback_left));
+    player_bq_get_state(NULL,&state); assert(state.count==0 && state.playIndex==0);
+    pthread_mutex_unlock(&game_audio_lock);
+    wait_for(&callback_left,1);
     player_play_set_state(NULL,SL_PLAYSTATE_STOPPED);
     obj_destroy(obj); assert(!g_player);
 }
@@ -216,12 +248,16 @@ test = test.replace('assert(ime_utf8(full,64,out,sizeof(out))==192);', r'''asser
     ime_init_rc=-1; pvz2_text_request(); assert(!pvz2_numeric_poll());
     assert(!pvz2_keyboard_is_showing());
     puts("PASS: exact 4.5.2 whole-field selection; empty confirmation delivered; IME accept/cancel/failure, numeric filtering, commit visibility; exact Android key-down/up packets");''')
+test = test.replace('#include "reimpl/opensl_audio.c"', source)
 test += '\n'.join(f'const SLInterfaceID {name} = NULL;' for name in ids)
 (work / 'check.c').write_text(test, encoding='utf-8')
 exe = work / 'check.exe'
 subprocess.run(['gcc', '-std=gnu11', '-O2', '-static', '-pthread', '-I'+str(work),
                 '-I'+str(src), str(work/'check.c'), '-o', str(exe)], check=True, timeout=30)
-run = subprocess.run([str(exe)], check=True, capture_output=True, text=True, timeout=8)
+run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=8)
+if run.returncode:
+    print(run.stdout, run.stderr)
+    run.check_returncode()
 (work / 'result.txt').write_text(run.stdout, encoding='utf-8')
 print(run.stdout.strip())
 print(work)

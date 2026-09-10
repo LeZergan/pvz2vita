@@ -4,8 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #ifndef PVZ2_PIXEL_HOST_TEST
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/kernel/error.h>
 #include "utils/telemetry.h"
 #endif
 
@@ -19,12 +21,21 @@ typedef struct {
 } PixelJob;
 static pthread_mutex_t pixel_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t submit_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t pixel_start = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t pixel_done = PTHREAD_COND_INITIALIZER;
-static unsigned worker_count, pending, generation;
+static SceUID worker_start[PIXEL_MAX_WORKERS], completion;
+static unsigned worker_count;
+static atomic_uint pending, generation;
 static int initialized;
 static PixelJob current_job;
 static uint64_t jobs, parallel_jobs, worker_pixels, caller_pixels;
+
+/* Notifications only shorten the sleep. The published generation and pending
+ * count are authoritative, so a coalesced/missing wake cannot strand a job.
+ * Never return a buffer while a worker still owns its rows. */
+static void pixel_wait(SceUID notification, unsigned timeout) {
+    int rc = sceKernelWaitSema(notification, 1, &timeout);
+    if (rc < 0 && rc != SCE_KERNEL_ERROR_WAIT_TIMEOUT)
+        sceKernelDelayThread(1000);
+}
 
 static void pixel_rows(const PixelJob *job, int first, int end) {
     const int half = job->mode != PVZ2_ALPHA_RGBA;
@@ -70,17 +81,19 @@ static void *pixel_worker(void *arg) {
                   sceKernelGetThreadCpuAffinityMask(self));
 #endif
     unsigned seen = 0;
-    pthread_mutex_lock(&pixel_lock);
     for (;;) {
-        while (seen == generation) pthread_cond_wait(&pixel_start, &pixel_lock);
-        seen = generation;
+        unsigned next;
+        while ((next = atomic_load_explicit(&generation, memory_order_acquire)) == seen)
+            pixel_wait(worker_start[index], 100000);
+        seen = next;
         const PixelJob job = current_job;
         const int first = (int)((uint64_t)job.out_height * index / (worker_count + 1));
         const int end = (int)((uint64_t)job.out_height * (index + 1) / (worker_count + 1));
-        pthread_mutex_unlock(&pixel_lock);
         pixel_rows(&job, first, end);
-        pthread_mutex_lock(&pixel_lock);
-        if (--pending == 0) pthread_cond_signal(&pixel_done);
+        /* Acquire/release RMWs combine every worker's completed pixel writes.
+         * After this decrement, do not touch current_job or its buffers. */
+        atomic_fetch_sub_explicit(&pending, 1, memory_order_acq_rel);
+        sceKernelSignalSema(completion, 1);
     }
     return NULL;
 }
@@ -90,12 +103,23 @@ void pvz2_pixels_init(unsigned workers) {
     if (!initialized) {
         initialized = 1;
         if (workers > PIXEL_MAX_WORKERS) workers = PIXEL_MAX_WORKERS;
+        completion = sceKernelCreateSema("pvz2_pixel_done", 0, 0, PIXEL_MAX_WORKERS, NULL);
+        if (completion < 0) workers = 0;
         for (; worker_count < workers; ++worker_count) {
             pthread_t thread;
+            worker_start[worker_count] = sceKernelCreateSema("pvz2_pixel_start", 0, 0, 1, NULL);
+            if (worker_start[worker_count] < 0) break;
             if (pthread_create_soloader(&thread, NULL, pixel_worker,
-                                        (void *)(uintptr_t)worker_count) != 0) break;
+                                        (void *)(uintptr_t)worker_count) != 0) {
+                sceKernelDeleteSema(worker_start[worker_count]);
+                break;
+            }
             pthread_detach(thread);
         }
+        if (!worker_count && completion >= 0) sceKernelDeleteSema(completion);
+#ifndef PVZ2_PIXEL_HOST_TEST
+        telemetry_log("PIXELS", "kernel notifications + atomic completion; workers=%u", worker_count);
+#endif
     }
     pthread_mutex_unlock(&pixel_lock);
 }
@@ -115,20 +139,20 @@ uint8_t *pvz2_pixels_convert(const uint8_t *src, int width, int height,
                          (size_t)dw * dh >= PIXEL_PARALLEL_MIN &&
                          pthread_mutex_trylock(&submit_lock) == 0;
     if (parallel) {
-        pthread_mutex_lock(&pixel_lock);
         current_job = job;
-        pending = worker_count;
-        ++generation;
+        atomic_store_explicit(&pending, worker_count, memory_order_relaxed);
+        atomic_fetch_add_explicit(&generation, 1, memory_order_release);
         first = (int)((uint64_t)dh * worker_count / (worker_count + 1));
-        pthread_cond_broadcast(&pixel_start);
-        pthread_mutex_unlock(&pixel_lock);
+        for (unsigned i = 0; i < worker_count; ++i)
+            sceKernelSignalSema(worker_start[i], 1);
     }
     pixel_rows(&job, first, dh);
-    pthread_mutex_lock(&pixel_lock);
     if (parallel) {
-        while (pending) pthread_cond_wait(&pixel_done, &pixel_lock);
-        ++parallel_jobs;
+        while (atomic_load_explicit(&pending, memory_order_acquire))
+            pixel_wait(completion, 10000);
     }
+    pthread_mutex_lock(&pixel_lock);
+    if (parallel) ++parallel_jobs;
     ++jobs;
     worker_pixels += (uint64_t)first * dw;
     caller_pixels += (uint64_t)(dh - first) * dw;

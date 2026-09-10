@@ -66,11 +66,26 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O2 -g3")
 set(CMAKE_C_FLAGS_RELEASE "-O2 -g0")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g0")
 
+# Explicit diagnostic build only. Zero defaults leave production calls untouched.
+set(PVZ2_STRESS_READ_KIB 0 CACHE STRING "Diagnostic read bandwidth, KiB/s (0 disables)")
+set(PVZ2_STRESS_READ_LATENCY_US 0 CACHE STRING "Diagnostic latency per successful read (0 disables)")
+if(PVZ2_STRESS_READ_KIB GREATER 0 OR PVZ2_STRESS_READ_LATENCY_US GREATER 0)
+  message(WARNING "READ-STRESS DIAGNOSTIC BUILD: do not publish as a release")
+  add_definitions(-DPVZ2_STRESS_READ_KIB=${PVZ2_STRESS_READ_KIB}
+                  -DPVZ2_STRESS_READ_LATENCY_US=${PVZ2_STRESS_READ_LATENCY_US})
+endif()
+
 # Keep ARM ABI mismatch diagnostics enabled. All libraries come from the
 # softfp SDK selected by scripts/build-vita.ps1.
+option(PVZ2_INPUT_REPLAY "Diagnostic bounded input replay (never publish)" OFF)
+if(PVZ2_INPUT_REPLAY)
+  message(WARNING "INPUT-REPLAY DIAGNOSTIC BUILD: do not publish as a release")
+  add_definitions(-DPVZ2_INPUT_REPLAY=1)
+endif()
 
 add_executable(${CMAKE_PROJECT_NAME}
                source/main_452.c
+               source/utils/input_replay.c
                source/dynlib.c
                source/dynlib_pvz2_gap.c
                source/reimpl/math_softfp.c
@@ -105,6 +120,7 @@ add_executable(${CMAKE_PROJECT_NAME}
                source/utils/settings.c
                source/utils/telemetry.c
                source/utils/stall_watch.c
+               source/utils/native_waits.c
                source/utils/utils.c
                lib/falso_jni/FalsoJNI.c
                lib/falso_jni/FalsoJNI_ImplBridge.c
@@ -131,6 +147,12 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
                         ${CMAKE_SOURCE_DIR}/lib/pvr/stubs_gen)
 
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,--wrap=pthread_cond_destroy)
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    -Wl,--wrap=pthread_cond_wait -Wl,--wrap=pthread_cond_timedwait
+    -Wl,--wrap=pthread_cond_signal -Wl,--wrap=pthread_cond_broadcast)
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    -Wl,--wrap=sceKernelWaitSema -Wl,--wrap=sceKernelLockMutex
+    -Wl,--wrap=sceGxmFinish -Wl,--wrap=sceIoRead -Wl,--wrap=sceIoPread)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
                       -Wl,--whole-archive pthread -Wl,--no-whole-archive

@@ -287,8 +287,9 @@ static void *mcsm_thr_entry(void *arg) {
     if (rc < 0) telemetry_log("CPU_ERROR", "worker tid=0x%x could not leave inherited affinity rc=0x%x", self, (unsigned)rc);
     static atomic_uint logged = ATOMIC_VAR_INIT(0);
     if (atomic_fetch_add(&logged, 1) < 24)
-        telemetry_log("CPU", "worker tid=0x%x mask=0x%05x rc=0x%08x",
-                      self, sceKernelGetThreadCpuAffinityMask(self), (unsigned)rc);
+        telemetry_log("CPU", "worker tid=0x%x mask=0x%05x rc=0x%08x entry=0x%x",
+                      self, sceKernelGetThreadCpuAffinityMask(self), (unsigned)rc,
+                      (unsigned)(uintptr_t)start);
     int slot = -1;
     for (unsigned i = 0; i < WORKER_STATS_CAP; ++i) {
         int empty = 0;

@@ -38,7 +38,15 @@ class Replay:
                 elf=ELFFile(stream)
                 for seg in elf.iter_segments():
                     if seg['p_type']=='PT_LOAD':uc.mem_write(base+seg['p_vaddr'],seg.data())
-                if not base:self.syms={s.name:s['st_value'] for s in elf.get_section_by_name('.symtab').iter_symbols()}
+                if not base:
+                    symbols=list(elf.get_section_by_name('.symtab').iter_symbols())
+                    self.syms={s.name:s['st_value'] for s in symbols}
+                    self.sizes={s.name:s['st_size'] for s in symbols}
+        self.imports={}
+        for table in ('default_dynlib','pvz2_gap_dynlib'):
+            for off in range(0,self.sizes[table],8):
+                name,fn=struct.unpack('<II',uc.mem_read(self.syms[table]+off,8))
+                self.imports.setdefault(cstr(uc,name).decode(),fn)
         self.at={self.syms[n]&~1:n for n in ('sceRtcGetCurrentTick','sceRtcConvertUtcToLocalTime',
             'sceRtcSetTime_t','sceRtcGetTime_t','sceRtcSetTick','sceRtcGetTick','__errno','__getreent',
             '__vita_sce_errno_to_errno','__emutls_get_address','_log_print','pthread_mutex_lock','pthread_mutex_unlock',
@@ -100,31 +108,40 @@ class Replay:
         u=self.u;u.reg_write(UC_ARM_REG_SP,SP);u.reg_write(UC_ARM_REG_LR,STOP)
         for reg,v in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3),args):u.reg_write(reg,v&0xffffffff)
         self.run(self.syms[name]);return u.reg_read(UC_ARM_REG_R0)
-    def native_fault_site(self,target):
+    def native_fault_site(self,target,seconds=6):
         u=self.u
-        put(u,BASE+0xd87d4,0xe51ff004,self.syms[target]) # resolved localtime PLT
-        u.reg_write(UC_ARM_REG_SP,SP);u.reg_write(UC_ARM_REG_R4,6)
+        assert self.imports['localtime']==self.syms[target], 'actual localtime import differs from tested function'
+        put(u,BASE+0xd87d4,0xe51ff004,self.imports['localtime']) # actual linked import
+        u.reg_write(UC_ARM_REG_SP,SP);u.reg_write(UC_ARM_REG_R4,seconds)
         self.run(BASE+0x81e9d4,BASE+0x81e9e8)
         return u.reg_read(UC_ARM_REG_R0)
 
+# September 9 batch: three UTC-7 cores (57, 6, 6 seconds) and two
+# UTC-3 cores (6, 6). RTC structures survive at the stopped SP minus 32.
+# Include the earlier UTC-4 report as well; duplicates need one replay.
+crash_cases=((-14400,6),(-25200,57),(-25200,6),(-10800,6))
 if a.old_loader_elf:
     old=Replay(a.old_loader_elf)
-    try:old.native_fault_site('localtime');raise AssertionError('Expected old NULL dereference')
-    except UcError:
-        assert old.u.reg_read(UC_ARM_REG_PC)==BASE+0x81e9e0
-        assert old.u.reg_read(UC_ARM_REG_R0)==0
-    print('PASS: old linked SDK + actual game instructions reproduce NULL read at libPVZ2+0x81e9e0 in UTC-4.')
+    for zone,seconds in crash_cases:
+        old.zone=zone
+        try:old.native_fault_site('localtime',seconds);raise AssertionError('Expected old NULL dereference')
+        except UcError:
+            assert old.u.reg_read(UC_ARM_REG_PC)==BASE+0x81e9e0
+            assert old.u.reg_read(UC_ARM_REG_R0)==0
+        print(f'PASS: old linked import reproduces NULL read at libPVZ2+0x81e9e0: offset={zone}, timestamp={seconds}.')
     old.u.mem_write(RAM+0x600,b'\xa5'*160);old.u.mem_write(RAM+0x300,b'ux0:data/pvz2\0')
     old.call('statfs_soloader',RAM+0x300,RAM+0x600)
     assert bytes(old.u.mem_read(RAM+0x658,40))==bytes(40)
     print('PASS: old ARM storage query reproduces 40-byte overwrite beyond Android statfs.')
 
 r=Replay(a.loader_elf);u=r.u
-assert r.native_fault_site('bionic_localtime')==(-14394)&0xffffffff
-print('PASS: patched ARM import runs past the exact crash site with gmtoff=-14400.')
-for zone in (-43200,-14400,-12600,0,10800,19800,20700,45900,50400):
+for zone,seconds in crash_cases:
     r.zone=zone
-    for seconds in (-2147483648,-1,0,6,951782400,2147483647):
+    assert r.native_fault_site('bionic_localtime',seconds)==(zone+seconds)&0xffffffff
+    print(f'PASS: patched linked import runs past the exact crash site: offset={zone}, timestamp={seconds}.')
+for zone in (-43200,-25200,-14400,-12600,-10800,0,10800,19800,20700,45900,50400):
+    r.zone=zone
+    for seconds in (-2147483648,-1,0,6,57,951782400,2147483647):
         put(u,RAM,seconds,0xdeadbeef);u.mem_write(RAM+0x100,b'\xa5'*76)
         assert r.call('bionic_localtime_r',RAM,RAM+0x110)==RAM+0x110
         values=struct.unpack('<11I',u.mem_read(RAM+0x110,44))
@@ -134,7 +151,7 @@ for zone in (-43200,-14400,-12600,0,10800,19800,20700,45900,50400):
         assert bytes(u.mem_read(RAM+0x100,16))==b'\xa5'*16
         assert bytes(u.mem_read(RAM+0x13c,16))==b'\xa5'*16
         assert r.call('bionic_mktime',RAM+0x110)==seconds&0xffffffff
-print('PASS: compiled ARM tm is exactly 44 bytes; 4-byte time_t input; signed epoch/2038 boundaries and 54 timezone round trips.')
+print('PASS: compiled ARM tm is exactly 44 bytes; 4-byte time_t input; signed epoch/2038 boundaries and 77 timezone round trips.')
 r.zone=-14400;put(u,RAM,6)
 r.call('bionic_localtime_r',RAM,RAM+0x110)
 u.mem_write(RAM+0x300,b'%Y-%m-%d %H:%M:%S %z %Z %s\0')

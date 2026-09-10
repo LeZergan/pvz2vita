@@ -66,6 +66,10 @@ With a host GCC installed and `out/` created:
 python3 scripts/check-touch-render.py
 python3 scripts/check-program-cache.py
 python3 scripts/check-program-binding.py
+python3 scripts/check-shader-pairs.py
+python3 scripts/check-async-reports.py
+python3 scripts/check-config-store.py
+python3 scripts/check-jni-unicode.py
 python3 scripts/check-placement.py
 python3 scripts/check-worker-affinity.py
 python3 scripts/check-pixel-workers.py
@@ -148,3 +152,12 @@ Optionally pass `--old-loader-elf /path/to/rc3-loader.elf` to reproduce invalid
 deletion first. This verifies the pinned SDK's 1024-program table limit used by
 the guard. Run it when replacing the vitaGL dependency; a different native table
 layout must be assessed before changing that limit. [Cleanup analysis](program-cleanup.md).
+
+
+RC11 also provides `scripts/check-shader-pairs-arm.py --loader-elf
+build-vita-direct/pvz2_loader` for the compiled VitaGL cache and attribute
+ownership path. It requires pyelftools and Unicorn, and runs bounded ARM
+routines with synthetic shader fixtures and mocked GPU calls; it does not boot
+a game or measure device FPS. The pinned library hashes are authoritative:
+the local VitaGL source checkout has newer internals and is not an exact
+reproduction of every shipped library structure.

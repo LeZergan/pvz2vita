@@ -29,6 +29,7 @@ prefix = r'''
 #include "FalsoJNI_ImplBridge.h"
 #include "FalsoJNI_Logger.h"
 #include "converter.h"
+#include "jni_string_codec.h"
 #include "utils/texture_marks.h"
 void _fjni_log_debug(const char*a,int b,const char*c,const char*d,...) {}
 void _fjni_log_info(const char*a,int b,const char*c,const char*d,...) {}

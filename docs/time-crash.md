@@ -69,7 +69,7 @@ instruction and returns the expected local timestamp. It also reproduces the
 old storage query's 40-byte overwrite and verifies the new 88-byte boundary.
 
 The checks include 19,643 independently checked calendar/timezone cases, 54
-compiled ARM timezone round trips, epoch/2038 boundaries, leap days, malformed
+compiled ARM timezone round trips in the original check (now 77), epoch/2038 boundaries, leap days, malformed
 fields, 64-bit overflow, eight concurrent time callers and directory scans,
 RTC failure/recovery, parsing and formatting, full/unavailable storage, long
 names, end-of-directory, allocation failures and incomplete file I/O.
@@ -93,3 +93,39 @@ fault. It does not prove sustained frame rate or full-game stability.
 - [Vita storage query](https://github.com/vitasdk/vita-headers/blob/master/include/psp2/io/devctl.h)
 
 Core dumps, logs, game binaries and saves are kept out of the source repository.
+
+## September 9: five additional user dumps
+
+All five supplied dumps stop the main thread on the same data abort at
+`libPVZ2+0x81e9e0`, with `r0=0`. After accounting for each loader's relocated
+text base, every LR is `loader+0x8e9f1`, the archived RC6 `localtime_r` error
+return path. The module fingerprint and segment sizes also match the earlier
+RC6 report. These are evidence of the old failure path, not RC4 runtime failures;
+the dumps do not provide a full installed executable hash.
+
+| Dump timestamp | Input seconds | Retained local RTC date | Offset |
+| --- | ---: | --- | --- |
+| 1788920187 | 57 | 1969-12-31 17:00:57 | UTC-7 |
+| 1788920222 | 6 | 1969-12-31 17:00:06 | UTC-7 |
+| 1788920258 | 6 | 1969-12-31 17:00:06 | UTC-7 |
+| 1788920884 | 6 | 1969-12-31 21:00:06 | UTC-3 |
+| 1788921085 | 6 | 1969-12-31 21:00:06 | UTC-3 |
+
+The retained RTC structures are at the stopped stack pointer minus 32 bytes.
+All gzip streams validate, including the three `.tmp` files. Those three have
+unavailable trailing ELF segments, but retain the module, thread, registers,
+and stack records needed for this diagnosis. The two final dumps are complete.
+
+The expanded `check-time-arm.py` now resolves `localtime` from the actual linked
+import table and checks that it points to the tested function. It reproduces
+each distinct offset/timestamp pair against RC6 and executes the same game
+instructions successfully against the existing `452-v1.1-rc4` fix. The broader
+matrix covers 77 timezone round trips. The 19,643 host calendar cases and
+concurrent-caller checks also pass.
+
+No further runtime patch is needed for this batch. Canonical packaging was
+rerun; the current ELF and `eboot.bin` are byte-identical to the preserved RC4
+artifacts. Install `out/pvz2-vita-latest.vpk` over the existing app, retain
+`ux0:data/pvz2/` and `userdata/`, and replay the affected actions. This batch
+does not establish physical Vita success with the fixed build or resolve the
+separately reported transition stalls.

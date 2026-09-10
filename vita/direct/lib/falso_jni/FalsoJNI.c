@@ -30,6 +30,7 @@
 #include "FalsoJNI_Logger.h"
 #include "FalsoJNI.h"
 #include "converter.h"
+#include "jni_string_codec.h"
 
 // Objects to be passed to client applications:
 JavaVM jvm;
@@ -215,11 +216,11 @@ static void tracked_free_object(jobject obj, TrackedObjKind kind) {
     }
 }
 
-static void tracked_register_local_owned(jobject obj, TrackedObjKind kind) {
+static jobject tracked_register_local_owned(jobject obj, TrackedObjKind kind) {
     TrackedRef *existing;
 
     if (!obj || is_reserved_fake_ref(obj) || kind == TRACKED_OBJ_UNKNOWN) {
-        return;
+        return NULL;
     }
 
     tracked_refs_lock();
@@ -229,14 +230,15 @@ static void tracked_register_local_owned(jobject obj, TrackedObjKind kind) {
             existing->kind = kind;
         }
         tracked_refs_unlock();
-        return;
+        return obj;
     }
     tracked_refs_unlock();
 
     TrackedRef *entry = (TrackedRef *)malloc(sizeof(TrackedRef));
     if (!entry) {
         fjni_logv_err("[JNI] failed to track local ref 0x%x", (int)obj);
-        return;
+        tracked_free_object(obj, kind);
+        return NULL;
     }
 
     entry->obj = obj;
@@ -254,7 +256,7 @@ static void tracked_register_local_owned(jobject obj, TrackedObjKind kind) {
         }
         tracked_refs_unlock();
         free(entry);
-        return;
+        return obj;
     }
 
     unsigned bucket = tracked_bucket(obj);
@@ -263,6 +265,7 @@ static void tracked_register_local_owned(jobject obj, TrackedObjKind kind) {
     ++g_tracked_live;
     ++g_tracked_created;
     tracked_refs_unlock();
+    return obj;
 }
 
 static void tracked_add_ref_if_known(jobject obj, int as_global) {
@@ -1898,209 +1901,74 @@ void SetStaticDoubleField(JNIEnv* env, jclass clazz, jfieldID fieldID, jdouble v
     setDoubleFieldValueById(fieldID, value);
 }
 
+/* Both representations are complete before publication and immutable thereafter.
+ * JNI getters never rebuild shared buffers while another thread may read them. */
 jstring NewString(JNIEnv* env, const jchar* chars, jsize char_count) {
-    // abort()s here replicate Dalvik behavior.
-    if (char_count < 0) {
-        fjni_logv_err("[JNI] NewString(env, %p, %i): Fatal: char_count < 0! Aborting.", chars, char_count);
-        abort();
-    }
-
-    if (chars == NULL && char_count > 0) {
-        fjni_logv_err("[JNI] NewString(env, %p, %i): Fatal: chars == null && char_count > 0", chars, char_count);
-        abort();
-    }
-
-    JavaString * res = malloc(sizeof(JavaString));
-    if (res == NULL) {
-        fjni_logv_err("[JNI] NewString(env, %p, %i): Fatal: malloc failed", chars, char_count);
-        return NULL;
-    }
-
-    res->utf8 = NULL;
+    if (char_count < 0 || (!chars && char_count)) return NULL;
+    JavaString *res = calloc(1, sizeof(*res));
+    if (!res) return NULL;
     res->utf16 = jda_alloc(char_count, FIELD_TYPE_CHAR);
-    if (res->utf16 == NULL) {
-        fjni_logv_err("[JNI] NewString(env, %p, %i): Fatal: jda_alloc failed", chars, char_count);
-        free(res);
-        return NULL;
+    if (!res->utf16) { free(res); return NULL; }
+    if (char_count) memcpy(res->utf16->array, chars, (size_t)char_count * sizeof(jchar));
+    if (!jstr_utf16_to_utf8(res)) {
+        jda_free(res->utf16); free(res); return NULL;
     }
-
-    memcpy(res->utf16->array, chars, char_count * sizeof(jchar));
-
-    // Performing extraneous conversion on debug builds to show the string in the console output
-#if FALSOJNI_DEBUGLEVEL <= FALSOJNI_DEBUG_ALL
-    if (jstr_utf16_to_utf8(res) == JNI_FALSE) {
-        fjni_logv_err("[JNI] NewString(env, %p, %i): debug utf16 conversion failed", chars, char_count);
-    } else {
-        fjni_logv_dbg("[JNI] NewString(env, \"%s\", %i)", (char *)res->utf8->array, char_count);
-    }
-#endif
-
-    tracked_register_local_owned((jobject)res, TRACKED_OBJ_STRING);
-    return res;
+    return tracked_register_local_owned((jobject)res, TRACKED_OBJ_STRING);
 }
 
 jsize GetStringLength(JNIEnv* env, jstring string) {
-    JavaString * str = string;
-
-    // Performing extraneous conversion on debug builds to show the string in the console output
-#if FALSOJNI_DEBUGLEVEL <= FALSOJNI_DEBUG_ALL
-    if (jstr_utf16_to_utf8(str) == JNI_FALSE) {
-        fjni_logv_err("[JNI] GetStringLength(env, %p): debug utf16 conversion failed", string);
-    } else {
-        fjni_logv_dbg("[JNI] GetStringLength(env, \"%s\")", (char *)str->utf8->array);
-    }
-#endif
-
-    return str->utf16->len;
+    return string ? ((JavaString *)string)->utf16->len : 0;
 }
 
 const jchar * GetStringChars(JNIEnv* env, jstring string, jboolean *isCopy) {
-    if (!string) {
-        fjni_logv_err("[JNI] GetStringChars(env, %p, *isCopy): string is null", string);
-        return NULL;
-    }
-
-    JavaString * str = string;
-
-    if (isCopy != NULL) {
-        *isCopy = JNI_TRUE;
-    }
-
-    jchar * ret = malloc(str->utf16->len * sizeof(jchar));
-    if (ret == NULL) {
-        fjni_logv_err("[JNI] GetStringChars(env, %p, *isCopy): malloc failed", string);
-        return NULL;
-    }
-
-    memcpy(ret, str->utf16->array, str->utf16->len * sizeof(jchar));
-
-    // Performing extraneous conversion on debug builds to show the string in the console output
-#if FALSOJNI_DEBUGLEVEL <= FALSOJNI_DEBUG_ALL
-    if (jstr_utf16_to_utf8(str) == JNI_FALSE) {
-        fjni_logv_err("[JNI] GetStringChars(env, %p, *isCopy): debug utf16 conversion failed", string);
-    } else {
-        fjni_logv_dbg("[JNI] GetStringChars(env, \"%s\", *isCopy)", (char *)str->utf8->array);
-    }
-#endif
-
-    return ret;
+    if (!string) return NULL;
+    JavaString *str = string;
+    size_t bytes = (size_t)str->utf16->len * sizeof(jchar);
+    jchar *copy = malloc(bytes ? bytes : sizeof(jchar));
+    if (!copy) return NULL;
+    if (bytes) memcpy(copy, str->utf16->array, bytes);
+    if (isCopy) *isCopy = JNI_TRUE;
+    return copy;
 }
 
 void ReleaseStringChars(JNIEnv* env, jstring string, const jchar *chars) {
-    if (chars == NULL) {
-        fjni_logv_err("[JNI] ReleaseStringChars(env, %p, %p): chars is null", string, chars);
-        return;
-    }
-
-    // Performing extraneous conversion on debug builds to show the string in the console output
-#if FALSOJNI_DEBUGLEVEL <= FALSOJNI_DEBUG_ALL
-    JavaString * str = string;
-    if (jstr_utf16_to_utf8(str) == JNI_FALSE) {
-        fjni_logv_err("[JNI] ReleaseStringChars(env, %p, %p): debug utf16 conversion failed", string, chars);
-    } else {
-        fjni_logv_dbg("[JNI] ReleaseStringChars(env, \"%s\", %p)", (char *)str->utf8->array, chars);
-    }
-#endif
-
-    free((jchar *)chars);
+    free((void *)chars);
 }
 
 jstring NewStringUTF(JNIEnv* env, const char* bytes) {
-    fjni_logv_dbg("[JNI] NewStringUTF(env, \"%s\")", bytes);
-
-    int len = strlen(bytes) + 1; // with null terminator
-
-    JavaString * res = malloc(sizeof(JavaString));
-    if (res == NULL) {
-        fjni_logv_err("[JNI] NewStringUTF(env, \"%s\"): Fatal: malloc failed", bytes);
-        return NULL;
+    if (!bytes) return NULL;
+    size_t size = strlen(bytes);
+    if (size >= INT_MAX) return NULL;
+    JavaString *res = calloc(1, sizeof(*res));
+    if (!res) return NULL;
+    res->utf8 = jda_alloc((jsize)size + 1, FIELD_TYPE_BYTE);
+    if (!res->utf8) { free(res); return NULL; }
+    memcpy(res->utf8->array, bytes, size + 1);
+    /* Decode first, then canonicalize four-byte native UTF-8 to JNI's form. */
+    if (!jstr_utf8_to_utf16(res) || !jstr_utf16_to_utf8(res)) {
+        if (res->utf16) jda_free(res->utf16);
+        jda_free(res->utf8); free(res); return NULL;
     }
-
-    res->utf8 = jda_alloc(len, FIELD_TYPE_BYTE);
-    if (res->utf8 == NULL) {
-        fjni_logv_err("[JNI] NewStringUTF(env, \"%s\"): Fatal: jda_alloc failed", bytes);
-        free(res);
-        return NULL;
-    }
-
-    res->utf16 = jda_alloc(len - 1, FIELD_TYPE_CHAR);
-
-    if (res->utf16 == NULL) {
-        fjni_logv_err("[JNI] NewStringUTF(env, \"%s\"): Fatal: jda_alloc failed", bytes);
-        jda_free(res->utf8);
-        free(res);
-        return NULL;
-    }
-
-    memcpy(res->utf8->array, bytes, res->utf8->len);
-
-    if (jstr_utf8_to_utf16(res) == JNI_FALSE) {
-        fjni_logv_err("[JNI] NewStringUTF(env, \"%s\"): utf16 conversion failed", bytes);
-        jda_free(res->utf8);
-        jda_free(res->utf16);
-        free(res);
-        return NULL;
-    }
-
-    tracked_register_local_owned((jobject)res, TRACKED_OBJ_STRING);
-    return res;
+    return tracked_register_local_owned((jobject)res, TRACKED_OBJ_STRING);
 }
 
 jsize GetStringUTFLength(JNIEnv* env, jstring string) {
-    if (!string) {
-        fjni_logv_err("[JNI] GetStringUTFLength(env, %p): string is null", string);
-    }
-
-    JavaString * str = string;
-
-    // Performing extraneous conversion on debug builds to show the string in the console output
-#if FALSOJNI_DEBUGLEVEL <= FALSOJNI_DEBUG_ALL
-    if (jstr_utf16_to_utf8(str) == JNI_FALSE) {
-        fjni_logv_err("[JNI] GetStringUTFLength(env, %p): debug utf16 conversion failed", string);
-    } else {
-        fjni_logv_dbg("[JNI] GetStringUTFLength(env, \"%s\")", str->utf8->array);
-    }
-#endif
-
-    return str->utf16->len;
+    return string ? ((JavaString *)string)->utf8->len - 1 : 0;
 }
 
 const char* GetStringUTFChars(JNIEnv* env, jstring string, jboolean* isCopy) {
-    if (!string) {
-        fjni_logv_err("[JNI] GetStringUTFChars(env, %p, *isCopy): string is null", string);
-        return NULL;
-    }
-
-    JavaString * str = string;
-
-    if (isCopy != NULL) {
-        *isCopy = JNI_TRUE;
-    }
-
-    char * ret = malloc(str->utf16->len + 1);
-    if (ret == NULL) {
-        fjni_logv_err("[JNI] GetStringUTFChars(env, %p, *isCopy): malloc failed", string);
-        return NULL;
-    }
-
-    if (jstr_utf16_to_utf8(str) == JNI_FALSE) {
-        fjni_logv_err("[JNI] GetStringUTFChars(env, %p, *isCopy): utf16 conversion failed", string);
-        free(ret);
-        return NULL;
-    }
-
-    memcpy(ret, str->utf8->array, str->utf8->len);
-
-    fjni_logv_dbg("[JNI] GetStringUTFChars(env, \"%s\", *isCopy)", (char *)str->utf8->array);
-
-    return ret;
+    if (!string) return NULL;
+    const JavaString *str = string;
+    size_t bytes = (size_t)str->utf8->len; /* Includes the terminating byte. */
+    char *copy = malloc(bytes);
+    if (!copy) return NULL;
+    memcpy(copy, str->utf8->array, bytes);
+    if (isCopy) *isCopy = JNI_TRUE;
+    return copy;
 }
 
 void ReleaseStringUTFChars(JNIEnv* env, jstring string, char* chars) {
-    fjni_logv_dbg("[JNI] ReleaseStringUTFChars(env, %p, \"%s\")", string, chars);
-    if (chars) {
-        free(chars);
-    }
+    free(chars);
 }
 
 jsize GetArrayLength(JNIEnv* env, jarray array) {
@@ -2128,8 +1996,7 @@ jobjectArray NewObjectArray(JNIEnv* env, jsize length, jclass elementClass, jobj
     }
 
     fjni_logv_dbg("[JNI] NewObjectArray(env, %i, 0x%x, 0x%x): 0x%x", length, elementClass, initialElement, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jobject GetObjectArrayElement(JNIEnv* env, jobjectArray array, jsize index) {
@@ -2178,8 +2045,7 @@ jbooleanArray NewBooleanArray(JNIEnv* env, jsize length) {
     }
 
     fjni_logv_dbg("[JNI] NewBooleanArray(env, %i): 0x%x", length, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jbyteArray NewByteArray(JNIEnv* env, jsize length) {
@@ -2190,8 +2056,7 @@ jbyteArray NewByteArray(JNIEnv* env, jsize length) {
     }
 
     fjni_logv_dbg("[JNI] NewByteArray(env, %i): 0x%x", length, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jcharArray NewCharArray(JNIEnv* env, jsize length) {
@@ -2202,8 +2067,7 @@ jcharArray NewCharArray(JNIEnv* env, jsize length) {
     }
 
     fjni_logv_dbg("[JNI] NewCharArray(env, %i): 0x%x", length, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jshortArray NewShortArray(JNIEnv* env, jsize length) {
@@ -2214,8 +2078,7 @@ jshortArray NewShortArray(JNIEnv* env, jsize length) {
     }
 
     fjni_logv_dbg("[JNI] NewShortArray(env, %i): 0x%x", length, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jintArray NewIntArray(JNIEnv* env, jsize length) {
@@ -2226,8 +2089,7 @@ jintArray NewIntArray(JNIEnv* env, jsize length) {
     }
 
     fjni_logv_dbg("[JNI] NewIntArray(env, %i): 0x%x", length, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jlongArray NewLongArray(JNIEnv* env, jsize length) {
@@ -2238,8 +2100,7 @@ jlongArray NewLongArray(JNIEnv* env, jsize length) {
     }
 
     fjni_logv_dbg("[JNI] NewLongArray(env, %i): 0x%x", length, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jfloatArray NewFloatArray(JNIEnv* env, jsize length) {
@@ -2250,8 +2111,7 @@ jfloatArray NewFloatArray(JNIEnv* env, jsize length) {
     }
 
     fjni_logv_dbg("[JNI] NewFloatArray(env, %i): 0x%x", length, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jdoubleArray NewDoubleArray(JNIEnv* env, jsize length) {
@@ -2262,8 +2122,7 @@ jdoubleArray NewDoubleArray(JNIEnv* env, jsize length) {
     }
 
     fjni_logv_dbg("[JNI] NewDoubleArray(env, %i): 0x%x", length, (int)jda);
-    tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
-    return jda;
+    return tracked_register_local_owned((jobject)jda, TRACKED_OBJ_ARRAY);
 }
 
 jboolean* GetBooleanArrayElements(JNIEnv* env, jbooleanArray array, jboolean* isCopy) {
@@ -2506,45 +2365,25 @@ jint GetJavaVM(JNIEnv* env, JavaVM** vm) {
 }
 
 void GetStringRegion(JNIEnv* env, jstring str, jsize start, jsize len, jchar* buf) {
-    fjni_logv_dbg("[JNI] GetStringRegion(env, %p, start:%i, len:%i, %p)", str, start, len, buf);
-
-    if (str == NULL || buf == NULL) {
-        fjni_logv_err("[JNI] GetStringRegion(env, %p, start:%i, len:%i, %p): string or buf is null", str, start, len, buf);
+    if (!str || !buf) return;
+    const JavaString *string = str;
+    if (start < 0 || len < 0 || start > string->utf16->len || len > string->utf16->len - start) {
+        fjni_logv_err("%s", "[JNI] GetStringRegion: StringIndexOutOfBoundsException");
         return;
     }
-
-    JavaString * string = str;
-
-    if ((start + len) > string->utf16->len) {
-        fjni_logv_err("[JNI] GetStringRegion(env, %p, start:%i, len:%i, %p): StringIndexOutOfBoundsException", str, start, len, buf);
-        return;
-    }
-
-    memcpy(buf, (jchar *)string->utf16->array + start, len * sizeof(jchar));
+    if (len) memcpy(buf, (const jchar *)string->utf16->array + start, (size_t)len * sizeof(jchar));
 }
 
 void GetStringUTFRegion(JNIEnv* env, jstring str, jsize start, jsize len, char* buf) {
-    fjni_logv_dbg("[JNI] GetStringUTFRegion(env, %p, start:%i, len:%i, %p)", str, start, len, buf);
-
-    if (str == NULL || buf == NULL) {
-        fjni_logv_err("[JNI] GetStringUTFRegion(env, %p, start:%i, len:%i, %p): string or buf is null", str, start, len, buf);
+    if (!str || !buf) return;
+    const JavaString *string = str;
+    if (start < 0 || len < 0 || start > string->utf16->len || len > string->utf16->len - start) {
+        fjni_logv_err("%s", "[JNI] GetStringUTFRegion: StringIndexOutOfBoundsException");
         return;
     }
-
-    JavaString * string = str;
-
-    if ((start + len) > string->utf16->len) {
-        fjni_logv_err("[JNI] GetStringUTFRegion(env, %p, start:%i, len:%i, %p): StringIndexOutOfBoundsException", str, start, len, buf);
-        return;
-    }
-
-    if (jstr_utf16_to_utf8(string) == JNI_FALSE) {
-        fjni_logv_err("[JNI] GetStringUTFRegion(env, %p, start:%i, len:%i, %p): utf16 conversion failed", str, start, len, buf);
-        return;
-    }
-
-    memcpy(buf, (char *)string->utf8->array + start, len);
-    buf[len] = '\0';
+    /* Region indices are UTF-16 units, not UTF-8 byte offsets. JNI does not
+     * require a terminator here; write only the requested encoded region. */
+    fjni_mutf8_encode((const uint16_t *)string->utf16->array + start, (size_t)len, buf);
 }
 
 void* GetPrimitiveArrayCritical(JNIEnv* env, jarray array, jboolean* isCopy) {

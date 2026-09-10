@@ -45,11 +45,17 @@ static int pvz2_profile_sample;
 static unsigned pvz2_profile_draw_us, pvz2_profile_upload_us, pvz2_profile_uploads;
 static unsigned pvz2_program_binds, pvz2_program_binds_skipped, pvz2_program_link_us;
 static unsigned pvz2_matrix_uploads_skipped;
+static unsigned pvz2_pair_hits, pvz2_pair_misses, pvz2_pair_bypasses;
+#ifndef USE_PVR_PSP2
+static void shader_pairs_source_changed(GLuint shader);
+#endif
 void pvz2_gl_shader_stats(char *out, size_t size) {
-    snprintf(out, size, "binds=%u redundant_skipped=%u link_us=%u mat4_skipped=%u",
-             pvz2_program_binds, pvz2_program_binds_skipped, pvz2_program_link_us, pvz2_matrix_uploads_skipped);
+    snprintf(out, size, "binds=%u redundant_skipped=%u link_us=%u mat4_skipped=%u pair_hit=%u miss=%u bypass=%u",
+             pvz2_program_binds, pvz2_program_binds_skipped, pvz2_program_link_us, pvz2_matrix_uploads_skipped,
+             pvz2_pair_hits, pvz2_pair_misses, pvz2_pair_bypasses);
     pvz2_program_binds = pvz2_program_binds_skipped = pvz2_program_link_us = 0;
     pvz2_matrix_uploads_skipped = 0;
+    pvz2_pair_hits = pvz2_pair_misses = pvz2_pair_bypasses = 0;
 }
 void pvz2_gl_profile_begin(unsigned frame) { pvz2_profile_sample = (frame % 60) == 0; }
 void pvz2_gl_profile_stats(unsigned *draw, unsigned *upload, unsigned *uploads) {
@@ -4273,6 +4279,9 @@ void glShaderSource_soloader(GLuint shader, GLsizei count,
     }
 #endif
 
+#ifndef USE_PVR_PSP2
+    shader_pairs_source_changed(shader);
+#endif
     track_shader_source(shader, str, total_length);
     load_shader(shader, str, total_length);
 
@@ -4303,126 +4312,22 @@ void glCompileShader_soloader(GLuint shader) {
 #endif
 }
 
-/* ============================================================================
- * LOADER-SIDE SHADER PROGRAM CACHE (2026-06-30)
- * The Telltale engine compiles 63 UNIQUE GLSL programs via ShaccCg, in batches
- * at scene transitions (~99s of frozen sim-thread time per playthrough). They
- * never repeat, so the only way to kill the recompiles is to persist the
- * COMPILED GXM binary across runs. vitaGL's own HAVE_SHADER_CACHE does this but
- * is crash-prone (titleid overflow, OOM, stale-format deserialize). Instead we
- * cache at the loader level via glGetProgramBinary/glProgramBinary (both present
- * and functional in the stable lib), keyed by a hash of the (already vita-
- * patched) shader sources, with OUR OWN version magic so a stale or mismatched
- * file is IGNORED, never misread. Fully fail-safe: if no valid cache file
- * exists the program is untouched and compiles normally; we only call
- * glProgramBinary on a fully validated file.
- *
- * First run: compiles all 63 (freezes, behind the load screen) and writes the
- * binaries. Every run after: loads them instantly -> the scene-transition
- * freezes drop to near-zero. Bump PROGCACHE_MAGIC on any lib/compiler change. */
 #ifndef USE_PVR_PSP2
-extern void glGetProgramBinary(GLuint, GLsizei, GLsizei *, GLenum *, void *);
-extern void glProgramBinary(GLuint, GLenum, const void *, GLsizei);
-extern void glGetAttachedShaders(GLuint, GLsizei, GLsizei *, GLuint *);
-#ifndef GL_PROGRAM_BINARY_LENGTH
-#define GL_PROGRAM_BINARY_LENGTH 0x8741
+#include "utils/shader_pairs.h"
 #endif
-
-#define PROGCACHE_DIR    DATA_PATH "cache/programs"
-#define PROGCACHE_MAGIC  0x4d435031u   /* 'MCP1' */
-#define PROGCACHE_MAXBIN (1024u * 1024u)
-static int g_progcache_dir_ready = 0;
-static unsigned g_progcache_hits = 0, g_progcache_misses = 0;
-
-/* FNV-1a over the attached shaders' tracked (patched) sources. 0 = unkeyable. */
-static uint64_t progcache_key_for_program(GLuint program) {
-    GLuint sh[8]; GLsizei n = 0;
-    glGetAttachedShaders(program, 8, &n, sh);
-    if (n <= 0) return 0;
-    uint64_t h = 1469598103934665603ull;
-    for (GLsizei i = 0; i < n; i++) {
-        shader_diag_entry *e = get_shader_diag_entry(sh[i], 0);
-        if (!e || !e->owned_source || e->owned_source_len == 0) return 0;
-        const unsigned char *p = (const unsigned char *)e->owned_source;
-        for (size_t k = 0; k < e->owned_source_len; k++) { h ^= p[k]; h *= 1099511628211ull; }
-        h ^= 0x7c; h *= 1099511628211ull;   /* separator between shaders */
-    }
-    return h ? h : 1;
-}
-
-static void progcache_path(uint64_t key, char *out, int outsz) {
-    snprintf(out, outsz, "%s/%08X%08X.bin", PROGCACHE_DIR,
-             (unsigned)(key >> 32), (unsigned)(key & 0xffffffffu));
-}
-
-/* Returns 1 if the program is now linked from a valid cache file (skip compile),
- * 0 if there was no usable file (program untouched -> compile normally). */
-static int progcache_try_load(GLuint program, uint64_t key) {
-    if (!key) return 0;
-    char path[160]; progcache_path(key, path, sizeof(path));
-    SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
-    if (fd < 0) return 0;
-    uint32_t hdr[4];   /* magic, version, binaryFormat, length */
-    if (sceIoRead(fd, hdr, sizeof(hdr)) != (int)sizeof(hdr) ||
-        hdr[0] != PROGCACHE_MAGIC || hdr[3] == 0 || hdr[3] > PROGCACHE_MAXBIN) {
-        sceIoClose(fd); return 0;   /* stale/garbage -> recompile + overwrite */
-    }
-    void *buf = malloc(hdr[3]);
-    if (!buf) { sceIoClose(fd); return 0; }
-    int rd = sceIoRead(fd, buf, hdr[3]);
-    sceIoClose(fd);
-    if (rd != (int)hdr[3]) { free(buf); return 0; }
-    /* File fully validated: commit to glProgramBinary. */
-    glProgramBinary(program, (GLenum)hdr[2], buf, (GLsizei)hdr[3]);
-    free(buf);
-    GLint linked = GL_FALSE;
-    glGetProgramiv(program, GL_LINK_STATUS, &linked);
-    if (linked != GL_TRUE) {
-        /* Should not happen for a matching-magic file; self-heal by deleting it
-         * so next run recompiles. The program is committed either way. */
-        sceIoRemove(path);
-    }
-    return 1;
-}
-
-/* Persist the freshly-compiled binary for next run. Best-effort, never fatal. */
-static void progcache_save(GLuint program, uint64_t key) {
-    if (!key) return;
-    GLint linked = GL_FALSE;
-    glGetProgramiv(program, GL_LINK_STATUS, &linked);
-    if (linked != GL_TRUE) return;
-    GLint binlen = 0;
-    glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &binlen);
-    if (binlen <= 0 || (unsigned)binlen > PROGCACHE_MAXBIN) return;
-    void *bin = malloc((size_t)binlen);
-    if (!bin) return;
-    GLsizei len = 0; GLenum fmt = 0;
-    glGetProgramBinary(program, binlen, &len, &fmt, bin);
-    if (len <= 0 || (unsigned)len > (unsigned)binlen) { free(bin); return; }
-    if (!g_progcache_dir_ready) { sceIoMkdir(PROGCACHE_DIR, 0777); g_progcache_dir_ready = 1; }
-    char path[160]; progcache_path(key, path, sizeof(path));
-    SceUID fd = sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-    if (fd >= 0) {
-        uint32_t hdr[4] = { PROGCACHE_MAGIC, 1u, (uint32_t)fmt, (uint32_t)len };
-        sceIoWrite(fd, hdr, sizeof(hdr));
-        sceIoWrite(fd, bin, len);
-        sceIoClose(fd);
-    }
-    free(bin);
-}
-#endif /* !USE_PVR_PSP2 */
 
 void glLinkProgram_soloader(GLuint program) {
     program_caches_invalidate(program);
     if (g_uniform_current_program == program) g_last_mat4_have = 0;
-    /* Match PvZ2Native's libGLES hook exactly: linking is a direct driver call.
-     * The inherited on-disk binary cache fed VitaGL binaries built by other
-     * revisions back into this process and crashed while restoring program 2. */
 #ifndef USE_PVR_PSP2
     launch_state_mark_gl_phase(2);
 #endif
     uint64_t begin = sceKernelGetSystemTimeWide();
+#ifndef USE_PVR_PSP2
+    shader_pairs_link(program);
+#else
     glLinkProgram(program);
+#endif
     pvz2_program_link_us += (unsigned)(sceKernelGetSystemTimeWide() - begin);
 #ifndef USE_PVR_PSP2
     launch_state_mark_gl_phase(0);
