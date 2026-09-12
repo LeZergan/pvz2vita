@@ -11,11 +11,11 @@
 
 Unofficial PS Vita loader for the Android 4.5.2 ROW build of *Plants vs. Zombies 2*.
 
-[Download](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc11) — [Report a problem](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
+[Download](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc12) — [Report a problem](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
 
 | | |
 | :-- | :-- |
-| Loader | PvZ2 1.1 RC11 (`452-v1.1-rc11`) |
+| Loader | PvZ2 1.1 RC12 (`452-v1.1-rc12`) |
 | Supported Android set | 4.5.2 ROW, version 147, ARMv7 |
 | Data path | `ux0:data/pvz2` |
 | Licence | [MIT](LICENSE), with third-party notices |
@@ -25,17 +25,17 @@ No Android game files are included. You must supply your own matching
 
 ## Current release status
 
-**1.1 RC11 beta is available.** Install its VPK over the previous version and
-keep your existing game files and saves.
+**1.1 RC12 is available.** Install its VPK over the previous version and keep
+your existing game files and saves.
 
-RC5–RC11 fix audio queue locking, configuration startup races, JNI string
-handling, and a texture-worker handoff identified in a hardware loading freeze.
-RC11 also reuses matching shader pairs within a session and moves periodic log
-writes off the game thread. The latest RC10 hardware log reaches 15,300 frames
-without a stall report. RC11 hardware performance is not yet measured; busy
-waves and some transitions still need work. See the
-[RC11 release notes](docs/release-notes-v1.1-rc11.md) and
-[performance evidence](docs/rc11-performance.md).
+RC12 fixes texture mip, packed-color update and allocation-recovery defects.
+It retains the RC5–RC11 audio, configuration, JNI, loading-worker, shader reuse
+and asynchronous logging fixes. The new RC11 hardware log reaches 189600 frames
+and shows four texture allocation errors. The supplied crash dumps are copies
+of older timezone crashes; the latest reported crash is not conclusively
+identified. RC12 hardware confirmation is pending. See the
+[release notes](docs/release-notes-v1.1-rc12.md) and
+[texture regression evidence](docs/rc12-texture-failures.md).
 
 ## Requirements
 

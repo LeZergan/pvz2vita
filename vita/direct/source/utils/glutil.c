@@ -2971,11 +2971,30 @@ static void texture_error(GLenum err, GLsizei width, GLsizei height) {
                       (unsigned)(vglMemFree(VGL_MEM_RAM)/1024));
 }
 
+static void texture_placeholder(GLenum target, int width, int height) {
+    static const uint8_t pixel[4] = {0, 0, 0, 255};
+    (void)drain_gl_errors_limited();
+    glTexImage2D(target, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR)
+        fatal_error("Graphics memory is exhausted. Close and relaunch the game.\n"
+                    "Keep userdata/loader.log for support.\nTexture: %dx%d (0x%x)", width, height, error);
+    texture_marks_reset(s_texlru_bound);
+    texfail_mark(s_texlru_bound);
+    force_complete_filter(target);
+    telemetry_log("TEXTURE_RECOVERY", "id=%u original=%dx%d placeholder=1x1; later fills disabled",
+                  s_texlru_bound, width, height);
+}
+
 static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalformat,
                        GLsizei width, GLsizei height, GLint border,
                        GLenum format, GLenum type, const void *pixels) {
     texture_sync_upload_binding(target);
     if (level == 0 && target == GL_TEXTURE_2D) texture_marks_reset(s_texlru_bound);
+    /* This is the imported entry point. The same guard in the old unused
+     * glTexImage2D_soloader did not protect actual game uploads. */
+    if (target == GL_TEXTURE_2D && level > 0 &&
+        (dsamp_is(s_texlru_bound) || texfail_is(s_texlru_bound))) return;
     static unsigned int s_count = 0;
     if (++s_count <= 300)
         l_info("UPLOAD glTexImage2D #%u %dx%d ifmt=0x%X fmt=0x%X type=0x%X data=%p",
@@ -2985,7 +3004,7 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
     /* GL_ALPHA (A8) -> RGBA8: vitaGL's A8 path corrupts the VRAM heap on large A8
      * textures (see s_alpha8 note) -> GPU crash. Re-route through the solid RGBA
      * path; mark the texture so glTexSubImage2D fills expand their A8 data too. */
-    if (level == 0 && target == 0x0DE1 &&
+    if (target == GL_TEXTURE_2D && (level == 0 || alpha8_is(s_texlru_bound)) &&
         (format == GL_ALPHA || internalformat == GL_ALPHA) && type == GL_UNSIGNED_BYTE) {
         alpha8_mark((GLuint)s_texlru_bound);
         /* Expanding A8->RGBA is 4x the memory; for large atlases that bloats
@@ -2993,7 +3012,7 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
          * Halve large ones so the footprint nets back to ~A8 (correct alpha, a bit
          * blurry). dsamp_mark makes glTexSubImage2D_soloader convert and halve
          * its A8 fills in a single pass to match the half-size RGBA storage. */
-        int ds = width >= 2 && height >= 2 && (width >= 1024 || height >= 1024);
+        int ds = level == 0 && width >= 2 && height >= 2 && (width >= 1024 || height >= 1024);
         int aw = ds ? (width >> 1) : width;
         int ah = ds ? (height >> 1) : height;
         uint8_t *rgba = NULL;
@@ -3002,15 +3021,21 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
                                       ds ? PVZ2_ALPHA_HALF : PVZ2_ALPHA_RGBA);
             if (!rgba) {
                 texture_error(GL_OUT_OF_MEMORY, width, height);
+                if (level == 0) texture_placeholder(target, width, height);
                 return;
             }
         }
         if (ds) dsamp_mark((GLuint)s_texlru_bound);
         (void)drain_gl_errors_limited();
-        glTexImage2D(target, 0, GL_RGBA, aw, ah, border,
+        glTexImage2D(target, level, GL_RGBA, aw, ah, border,
                      GL_RGBA, GL_UNSIGNED_BYTE, pixels ? (const void *)rgba : NULL);
         GLenum ae = glGetError();
         texture_error(ae, width, height);
+        if (ae != GL_NO_ERROR) {
+            free(rgba);
+            if (level == 0) texture_placeholder(target, width, height);
+            return;
+        }
         { static unsigned s = 0; if (s++ < 40) l_info("glTexImage2D GL_ALPHA->RGBA %dx%d->%dx%d tex=%u data=%p err=0x%X VRAM=%uKB",
               width, height, aw, ah, (unsigned)s_texlru_bound, pixels, (unsigned)ae, (unsigned)(vglMemFree(VGL_MEM_VRAM) / 1024u)); }
         force_complete_filter(target);
@@ -3018,22 +3043,29 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
         return;
     }
 
-    if (pixels && format == GL_RGBA && type == GL_UNSIGNED_SHORT_4_4_4_4) {
-        uint8_t *conv = convert_rgba4444_to_rgba8888((const uint16_t *)pixels, width, height);
+    if ((format == GL_RGBA && type == GL_UNSIGNED_SHORT_4_4_4_4) ||
+        (format == GL_RGB && type == GL_UNSIGNED_SHORT_5_6_5)) {
+        uint8_t *conv = pixels ? (format == GL_RGBA
+            ? convert_rgba4444_to_rgba8888((const uint16_t *)pixels, width, height)
+            : convert_rgb565_to_rgba8888((const uint16_t *)pixels, width, height)) : NULL;
+        if (!pixels) {
+            /* Allocate the same RGBA8 storage used for data-bearing uploads.
+             * VitaGL's packed storage path does not translate later RGBA8 fills. */
+            glTexImage2D_pvz2_impl(target, level, GL_RGBA, width, height, border,
+                                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+            return;
+        }
         if (conv) {
-            glTexImage2D(target, level, GL_RGBA, width, height, border,
-                         GL_RGBA, GL_UNSIGNED_BYTE, conv);
+            glTexImage2D_pvz2_impl(target, level, GL_RGBA, width, height, border,
+                                 GL_RGBA, GL_UNSIGNED_BYTE, conv);
             free(conv);
             return;
         }
-    } else if (pixels && format == GL_RGB && type == GL_UNSIGNED_SHORT_5_6_5) {
-        uint8_t *conv = convert_rgb565_to_rgba8888((const uint16_t *)pixels, width, height);
-        if (conv) {
-            glTexImage2D(target, level, GL_RGBA, width, height, border,
-                         GL_RGBA, GL_UNSIGNED_BYTE, conv);
-            free(conv);
-            return;
+        texture_error(GL_OUT_OF_MEMORY, width, height);
+        if (level == 0 && target == GL_TEXTURE_2D) {
+            texture_placeholder(target, width, height);
         }
+        return;
     }
     /* PROACTIVE downsample (2026-07-06, vitaGL GPU-pool pressure): the crash is
      * vitaGL's per-draw vertex alloc (gpu_alloc_mapped_aligned) returning NULL ->
@@ -3072,7 +3104,11 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
                     free(half);
                     return;
                 }
-                free(half);   /* half upload failed — fall through to full-res path */
+                free(half);
+                /* A failed smaller allocation must not trigger an even larger
+                 * full-resolution retry and another cycle of memory pressure. */
+                texture_placeholder(target, width, height);
+                return;
             }
         }
     }
@@ -3084,17 +3120,21 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
         l_info("VRAMTRACK glTexImage2D %dx%d ifmt=0x%X data=%p -> err=0x%X VRAM=%uKB RAM=%uKB",
                width, height, (unsigned)internalformat, pixels, (unsigned)e,
                (unsigned)(vglMemFree(VGL_MEM_VRAM) / 1024u), (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024u)); }
-    /* OOM FALLBACK for the uncompressed path (the compressed path already has one).
-     * A big RGBA atlas/render-target that won't fit VRAM otherwise leaves the engine's
-     * load-complete wait HANGING FOREVER on the failed texture = black loading screen.
-     * On OOM: retry at HALF res + dsamp_mark (glTexSubImage2D_soloader then auto-halves
-     * the fills). If half still OOMs: 1x1 placeholder + texfail_mark (skip its fills).
-     * Either way the texture is VALID, so the game proceeds to the menu — that art is
-     * just blurrier/missing. */
+    /* NULL defines storage that may become a render target. Its dimensions must
+     * continue matching the game's viewport and depth/stencil attachments. */
+    if (e == GL_OUT_OF_MEMORY && !pixels && level == 0 && target == GL_TEXTURE_2D)
+        fatal_error("Not enough graphics memory for this scene. Close and relaunch the game.\n"
+                    "Keep userdata/loader.log for support.\nTexture: %dx%d", width, height);
+    /* A sampled image can retry once at half resolution. Never label an empty
+     * allocation as a recovered image when CPU conversion itself failed. */
     if (e == 0x0505 /*GL_OUT_OF_MEMORY*/ && level == 0 && target == 0x0DE1 &&
         width >= 64 && height >= 64 && format == GL_RGBA && type == GL_UNSIGNED_BYTE) {
         (void)drain_gl_errors_limited();
-        uint8_t *half = pixels ? downsample_rgba8888_2x((const uint8_t *)pixels, width, height) : NULL;
+        uint8_t *half = downsample_rgba8888_2x((const uint8_t *)pixels, width, height);
+        if (!half) {
+            texture_placeholder(target, width, height);
+            return;
+        }
         glTexImage2D(target, level, internalformat, width >> 1, height >> 1, border,
                      format, type, pixels ? (const void *)half : NULL);
         if (glGetError() == GL_NO_ERROR) {
@@ -3103,14 +3143,7 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
             if (s++ < 24U) l_warn("glTexImage2D OOM: halved %dx%d->%dx%d tex=%u (dsamp) — art may blur",
                                   width, height, width >> 1, height >> 1, (unsigned)s_texlru_bound);
         } else {
-            static const uint8_t ph_px[4] = { 0, 0, 0, 255 };
-            (void)drain_gl_errors_limited();
-            glTexImage2D(target, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, ph_px);
-            (void)glGetError();
-            texfail_mark((GLuint)s_texlru_bound);
-            static unsigned int s2 = 0;
-            if (s2++ < 24U) l_warn("glTexImage2D OOM: half still OOM -> 1x1 placeholder tex=%u — art missing",
-                                   (unsigned)s_texlru_bound);
+            texture_placeholder(target, width, height);
         }
         free(half);
     }
@@ -3386,11 +3419,11 @@ void glTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffset,
         if (converted) {
             upload_pixels = converted;
         } else if (pixels) {
-            l_warn("glTexSubImage2D BGRA conversion failed size=%dx%d; uploading as GL_RGBA with original pointer.", width, height);
+            texture_error(GL_OUT_OF_MEMORY, width, height);
+            return;
         }
     }
-#ifdef USE_PVR_PSP2
-    /* PVR-only 16-bit promotion; vitaGL uploads 565/4444 natively (see glTexImage2D). */
+    /* Match the RGBA8 storage chosen by the actual image-upload wrapper. */
     else if (format == GL_RGB && type == GL_UNSIGNED_SHORT_5_6_5) {
         upload_format = GL_RGBA;
         upload_type = GL_UNSIGNED_BYTE;
@@ -3398,9 +3431,8 @@ void glTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffset,
         if (converted) {
             upload_pixels = converted;
         } else if (pixels) {
-            upload_format = orig_format;
-            upload_type = type;
-            l_warn("glTexSubImage2D RGB565 conversion failed size=%dx%d; uploading original 16-bit data.", width, height);
+            texture_error(GL_OUT_OF_MEMORY, width, height);
+            return;
         }
     } else if (format == GL_RGBA && type == GL_UNSIGNED_SHORT_4_4_4_4) {
         upload_format = GL_RGBA;
@@ -3409,11 +3441,10 @@ void glTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffset,
         if (converted) {
             upload_pixels = converted;
         } else if (pixels) {
-            upload_type = type;
-            l_warn("glTexSubImage2D RGBA4444 conversion failed size=%dx%d; uploading original 16-bit data.", width, height);
+            texture_error(GL_OUT_OF_MEMORY, width, height);
+            return;
         }
     }
-#endif
 
     int alpha_halved = 0;
     /* alpha8 texture (allocated as RGBA8 in glTexImage2D_pvz2): expand the A8 fill

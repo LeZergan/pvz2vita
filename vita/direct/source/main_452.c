@@ -430,14 +430,14 @@ int main(void) {
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
 #if PVZ2_INPUT_REPLAY
-    telemetry_log("BUILD", "452-v1.1-rc11-INPUT-REPLAY " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc12-INPUT-REPLAY " __DATE__ " " __TIME__);
     telemetry_log("DIAGNOSTIC", "bounded native input replay; cloned profiles only; NOT a release build");
 #elif PVZ2_STRESS_READ_KIB > 0 || PVZ2_STRESS_READ_LATENCY_US > 0
-    telemetry_log("BUILD", "452-v1.1-rc11-IO-STRESS " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc12-IO-STRESS " __DATE__ " " __TIME__);
     telemetry_log("DIAGNOSTIC", "artificial per-read delay: %u KiB/s plus %u us; NOT a release build",
                   PVZ2_STRESS_READ_KIB, PVZ2_STRESS_READ_LATENCY_US);
 #else
-    telemetry_log("BUILD", "452-v1.1-rc11 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc12 " __DATE__ " " __TIME__);
 #endif
     int32_t epoch_probe = 6;
     bionic_tm local_epoch;

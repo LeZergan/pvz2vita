@@ -1,5 +1,5 @@
-Plants vs Zombies 2 for PS Vita - 1.1 RC11 shader reuse and smoother reporting
-Build: 452-v1.1-rc11 | Game: 4.5.2 ROW (version 147)
+Plants vs Zombies 2 for PS Vita - 1.1 RC12 texture upload and allocation fixes
+Build: 452-v1.1-rc12 | Game: 4.5.2 ROW (version 147)
 
 ALREADY INSTALLED?
 Install pvz2-vita-latest.vpk over the previous version. That's all.
@@ -47,7 +47,18 @@ Snapshots are mirrored to loader.log when its writer is available.
 Each log is capped at 2 MiB plus one previous copy. If Vita generated a
 psp2core-...-eboot.bin.psp2dmp, keep that matching core dump as well.
 
-CHANGES IN 1.1 RC11
+CHANGES IN 1.1 RC12
+Fixes mip uploads for resized textures, packed-color storage/update mismatch,
+and failed conversion/alpha-upload recovery. Render-target allocation failure
+now reports an error instead of silently changing dimensions. Failed fallback
+storage cannot return to rendering. Placeholder recovery may omit artwork;
+unrecoverable graphics allocation requires a restart.
+Six old-code regressions fail on RC11 and pass on RC12; compiled ARM pixel
+checks pass. The supplied crash dumps were duplicates of older date crashes.
+The latest reported crash is not conclusively identified. Hardware retest of
+RC12 is still required. Install only this VPK; keep existing data and saves.
+
+RETAINED FROM 1.1 RC11
 Reuses matching shader pairs already compiled during the current session to
 avoid compiling them again. Moves periodic loader.log writes off the game
 thread so slow storage cannot hold up a frame report. Keeps the RC10 texture
