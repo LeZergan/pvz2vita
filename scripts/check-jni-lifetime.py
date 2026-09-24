@@ -10,6 +10,14 @@ work = Path(tempfile.mkdtemp(prefix="jni-lifetime-", dir=root / "out"))
 parser=argparse.ArgumentParser();parser.add_argument('--rounds',type=int,default=1);parser.add_argument('--jni-source',type=Path,default=lib/'FalsoJNI.c');args=parser.parse_args()
 jni = args.jni_source.read_text(encoding="utf-8")
 bridge = (lib / "FalsoJNI_ImplBridge.c").read_text(encoding="utf-8")
+# This check does not exercise _AtoV: returning va_list is target-specific and
+# is not a valid declaration on Linux x86_64, where va_list is an array. Keep
+# every lifetime type/declaration from the real header, omitting only that
+# unrelated declaration in the host adapter. Do not change the Vita header.
+header = (lib / "FalsoJNI_ImplBridge.h").read_text(encoding="utf-8")
+target_varargs = 'va_list _AtoV(int dummy, ...);'
+assert header.count(target_varargs) == 1
+(work / "FalsoJNI_ImplBridge.h").write_text(header.replace(target_varargs, ''), encoding="utf-8")
 
 
 def function(text, signature):
