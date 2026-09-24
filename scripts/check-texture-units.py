@@ -38,7 +38,7 @@ enum { GL_TEXTURE0=0x84c0, GL_TEXTURE_2D=0xde1, GL_ALPHA=0x1906, GL_RGBA=0x1908,
        GL_RGB=0x1907, GL_UNSIGNED_BYTE=0x1401, GL_UNSIGNED_SHORT_4_4_4_4=0x8033,
        GL_UNSIGNED_SHORT_5_6_5=0x8363, GL_BGRA_EXT=0x80e1, GL_ACTIVE_TEXTURE=1,
        GL_TEXTURE_BINDING_2D=2, GL_NO_ERROR=0, GL_OUT_OF_MEMORY=0x505,
-       VGL_MEM_VRAM=0, VGL_MEM_RAM=1 };
+       VGL_MEM_VRAM=0, VGL_MEM_RAM=1, GL_INVALID_VALUE=0x501, GL_ETC1_RGB8_OES=0x8d64 };
 #define MCSM_FAST_FINAL_RUNTIME 1
 #define DATA_PATH "no-test-settings/"
 #define GL_DIAG_TEX_UNIT_CAP 16
@@ -74,7 +74,8 @@ static void glTexImage2D(GLenum t,int l,int in,int w,int h,int border,GLenum f,G
 static void texlru_touch(GLuint t) {}
 static int push_unpack_alignment_one(void) { return 4; }
 static void pop_unpack_alignment(int a) {}
-static void force_complete_filter(GLenum t) {}
+static unsigned complete_filters;
+static void force_complete_filter(GLenum t) { ++complete_filters; }
 static int texture_upload_should_log(unsigned n,GLenum e) { return 0; }
 static int gl_verbose_diag_enabled(void) { return 0; }
 static size_t vglMemFree(int t) { return 1000000; }
@@ -92,12 +93,68 @@ static uint8_t *checked_convert(const uint8_t *p,int w,int h,enum pvz2_pixel_mod
 for name in ['rgba8888_byte_count','convert_rgba4444_to_rgba8888','convert_rgb565_to_rgba8888','gl_texture_unit_index','glActiveTexture_soloader','glBindTexture_soloader',
              'texture_sync_upload_binding','dsamp_mark','dsamp_is','alpha8_mark','alpha8_is',
              'texfail_mark','texfail_is','texture_marks_reset','glDeleteTextures_soloader',
-             'downsample_rgba8888_2x','glTexImage2D_pvz2_impl','glTexSubImage2D_soloader']:
+             'downsample_rgba8888_2x',*(['texture_reduce_dimensions'] if 'static int texture_reduce_dimensions(' in source else []),'glTexImage2D_pvz2_impl','glTexSubImage2D_soloader']:
     if name=='glTexImage2D_pvz2_impl' and 'static void texture_placeholder(' in source:c+=function('texture_placeholder')
     c+=function(name)
+c+=source[(source.index('static const int k_etc1_mod') if 'static const int k_etc1_mod' in source else source.index('static uint8_t *g_etc1_scratch')):(source.index('static int texture_reduce_dimensions(') if 'static int texture_reduce_dimensions(' in source else source.index('static void texture_marks_reset(GLuint id);'))]
+c+=r'''
+static int gl_get_int_for_diag(GLenum n,GLenum *err) { return bound[active]; }
+static void gl_tex_mark_pot(GLuint id,int w,int h) {}
+static void mcsm_scene_load_tick(void) {}
+static void texlru_before_upload(int id,int size) {}
+static void texlru_after_upload(int id,int size,GLenum err) {}
+static void glCompressedTexImage2D(GLenum t,int l,GLenum f,int w,int h,int b,int n,const void *p) { assert(0); }
+'''
+if 'static int etc1_payload_valid(' in source:c+=function('etc1_payload_valid')
+c+=function('glCompressedTexImage2D_soloader')+function('glCompressedTexSubImage2D_soloader')
 c+=r'''
 int main(int argc,char **argv) {
     const char *scenario=argc>1 ? argv[1] : "all";
+    if(!strcmp(scenario,"all") || !strcmp(scenario,"etc1-origin") || !strcmp(scenario,"etc1-offset")) {
+        unsigned char blocks[128]={0};
+        glBindTexture_soloader(GL_TEXTURE_2D,22);
+        glCompressedTexImage2D_soloader(GL_TEXTURE_2D,0,GL_ETC1_RGB8_OES,16,16,0,128,blocks);
+        unsigned images=image_calls, updates=calls;
+        int offset=!strcmp(scenario,"etc1-offset");
+        glCompressedTexSubImage2D_soloader(GL_TEXTURE_2D,0,offset?4:0,offset?8:0,8,8,GL_ETC1_RGB8_OES,32,blocks);
+        assert(image_calls==images && calls==updates+1 && last_x==(offset?4:0) && last_y==(offset?8:0));
+    }
+    if(!strcmp(scenario,"all") || !strcmp(scenario,"etc1")) {
+        unsigned char *blocks=calloc(1,2048*2048/2);assert(blocks);
+        glBindTexture_soloader(GL_TEXTURE_2D,23);
+        glCompressedTexImage2D_soloader(GL_TEXTURE_2D,0,GL_ETC1_RGB8_OES,2048,2048,0,2048*2048/2,blocks);
+        assert(last_w==1024 && last_h==1024 && dsamp_is(23));
+        if(!strcmp(scenario,"all")) assert(g_etc1_scratch_sz==4u*1024*1024);
+        assert(sample[0]==2 && sample[1]==2 && sample[2]==2 && sample[3]==255);
+        unsigned images=image_calls;
+        glCompressedTexSubImage2D_soloader(GL_TEXTURE_2D,0,0,0,8,8,GL_ETC1_RGB8_OES,32,blocks);
+        assert(image_calls==images && last_w==4 && dsamp_is(23));
+        glCompressedTexSubImage2D_soloader(GL_TEXTURE_2D,0,8,12,8,8,GL_ETC1_RGB8_OES,32,blocks);
+        assert(image_calls==images && last_x==4 && last_y==6 && last_w==4);
+        unsigned before=calls;
+        glCompressedTexImage2D_soloader(GL_TEXTURE_2D,0,GL_ETC1_RGB8_OES,8,8,0,1,blocks);
+        assert(calls==before); /* Truncated payload must never reach decoder. */
+        fail_uploads=1;
+        glCompressedTexImage2D_soloader(GL_TEXTURE_2D,0,GL_ETC1_RGB8_OES,2048,2048,0,2048*2048/2,blocks);
+        assert(last_w==1 && texfail_is(23));
+        glCompressedTexImage2D_soloader(GL_TEXTURE_2D,0,GL_ETC1_RGB8_OES,2048,2048,0,2048*2048/2,NULL);
+        assert(last_w==1024 && last_null && dsamp_is(23) && !texfail_is(23));
+        glCompressedTexSubImage2D_soloader(GL_TEXTURE_2D,0,0,0,2048,2048,GL_ETC1_RGB8_OES,2048*2048/2,blocks);
+        assert(last_w==1024 && g_etc1_scratch_sz==4u*1024*1024);
+        free(blocks);errors=0;
+        puts("PASS: ETC1 pixels; 4MiB CPU/GPU atlas storage, NULL allocation/full fill, origin/offset updates, payload bounds and recovery");
+    }
+    if(!strcmp(scenario,"all") || !strcmp(scenario,"half-filter")) {
+        uint8_t *large=calloc(1024*1024,4);assert(large);
+        glBindTexture_soloader(GL_TEXTURE_2D,19);
+        unsigned filters=complete_filters;
+        glTexImage2D_pvz2_impl(GL_TEXTURE_2D,0,GL_RGBA,1024,1024,0,GL_RGBA,GL_UNSIGNED_BYTE,large);
+        assert(dsamp_is(19) && complete_filters>filters);
+        filters=complete_filters;fail_uploads=1;
+        glTexImage2D_pvz2_impl(GL_TEXTURE_2D,0,GL_RGBA,64,64,0,GL_RGBA,GL_UNSIGNED_BYTE,large);
+        assert(dsamp_is(19) && complete_filters>filters);
+        free(large);errors=0;
+    }
     uint8_t rgba[8*8*4], alpha[8*8];
     memset(rgba,91,sizeof(rgba)); for(int i=0;i<64;++i) alpha[i]=i;
     glBindTexture_soloader(GL_TEXTURE_2D,11);

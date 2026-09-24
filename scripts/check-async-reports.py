@@ -15,6 +15,11 @@ c=r'''
 #include <string.h>
 #include <sched.h>
 #define DATA_PATH "test/"
+#define GAME_DATA_PATH "game/"
+typedef struct {unsigned st_mode;} SceIoStat;
+#define SCE_S_ISDIR(mode) ((mode)==1)
+static int directory;
+static int sceIoGetstat(const char*p,SceIoStat*s){assert(!strcmp(p,"game/logging"));s->st_mode=directory;return directory<0?-1:0;}
 #define SCE_O_WRONLY 1
 #define SCE_O_CREAT 2
 #define SCE_O_TRUNC 4
@@ -28,6 +33,7 @@ static unsigned opens, writes, last, fail_io;
 static int sceIoOpen(const char *p,int f,int m) { ++opens;return fail_io ? -1:1; }
 static int sceIoClose(int fd) { return 0; }
 static void bounded_log_write(int *fd,const char *p,const char *line,size_t n) {
+    if (!strncmp(line,"[BOOT]",6)) return;
     unsigned seq,payload;assert(n<1700 && line[n-1]=='\n');
     assert(sscanf(line,"[FPS] n=%u payload=%u",&seq,&payload)==2);
     assert(seq>last && payload==seq*17 && strstr(line,"[REPORTQ] dropped="));last=seq;++writes;
@@ -41,6 +47,13 @@ static void *consumer(void *unused) {
 }
 int main(void) {
     telemetry_report("FPS","n=1 payload=17");assert(!opens && !atomic_load(&g_report_write));
+    for(directory=-1;directory<=0;directory++) {
+        telemetry_reset();telemetry_log("TEST","silent");
+        telemetry_reports_enable();telemetry_report("FPS","n=1 payload=17");
+        assert(!pvz2_logging_enabled && !opens && !telemetry_try_line("silent"));
+    }
+    directory=1;telemetry_reset();assert(pvz2_logging_enabled && opens==2);
+    opens=0;
     telemetry_reports_enable();
     pthread_mutex_lock(&g_trace_mutex);
     for(unsigned i=1;i<=10000;++i)telemetry_report("FPS","n=%u payload=%u",i,i*17);

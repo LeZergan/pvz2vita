@@ -31,6 +31,8 @@
 #include "utils/telemetry.h"
 #include "utils/stall_watch.h"
 #include "utils/pixel_workers.h"
+#include "utils/power_policy.h"
+#include "utils/controller.h"
 #include "utils/text_field_452.h"
 #include "utils/input_replay.h"
 #include "utils/boot_check.h"
@@ -82,14 +84,24 @@ uintptr_t __gnu_Unwind_Find_exidx(uintptr_t pc, int *count) {
     return (uintptr_t)__exidx_start;
 }
 
-static void clocks_60fps(void) {
-    scePowerSetArmClockFrequency(444);
+static int cpu_ceiling_mhz = 444;
+static void clocks_init(void) {
+    /* Use an already available 500 MHz mode; stock firmware may reject it.
+     * Read back the accepted rate and never assume an unlocked PLL. */
+    int rc = scePowerSetArmClockFrequency(500);
+    int actual = scePowerGetArmClockFrequency();
+    if (actual != 500) {
+        scePowerSetArmClockFrequency(444);
+        actual = scePowerGetArmClockFrequency();
+    }
+    cpu_ceiling_mhz = actual == 500 ? 500 : 444;
     scePowerSetBusClockFrequency(222);
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
-    telemetry_log("60FPS", "clocks arm=%d gpu=%d bus=%d; vblank presentation enabled",
+    telemetry_log("FRAME", "clocks arm=%d gpu=%d bus=%d; vblank presentation enabled",
                   scePowerGetArmClockFrequency(), scePowerGetGpuClockFrequency(),
                   scePowerGetBusClockFrequency());
+    telemetry_log("POWER", "500MHz request rc=0x%x; accepted ceiling=%dMHz", (unsigned)rc, cpu_ceiling_mhz);
 }
 
 static void log_memory_stage(const char *stage) {
@@ -332,7 +344,7 @@ static void run_lifecycle(void) {
     telemetry_log("LIFECYCLE", "GitHub 4.5.2 launch/surface/active order complete");
 }
 
-static void run_60fps_loop(void) {
+static void run_frame_loop(void) {
     typedef void (*FrameNative)(JNIEnv *, jclass);
     FrameNative pump = (FrameNative)native_or_offset("Native_PumpMessageQueue",
                                                       OFF_PUMP_MESSAGE_QUEUE);
@@ -342,13 +354,21 @@ static void run_60fps_loop(void) {
     unsigned frame = 0;
     uint64_t pump_us = 0, draw_us = 0, present_us = 0;
     uint32_t peak_us = 0, slow_frames = 0;
-    telemetry_log("60FPS", "frame loop start: pump -> draw -> vblank swap, target 60 Hz");
+    Pvz2PowerPolicy power = {.mhz = cpu_ceiling_mhz, .ceiling_mhz = cpu_ceiling_mhz,
+                            .floor_mhz = 444, .next_reduce = sample_start + UINT64_C(10000000)};
+    int power_enabled = 1, arm_mhz = scePowerGetArmClockFrequency();
+    unsigned clock_changes = 0;
+    /* Optional comparison setting; no per-frame file access. */
+    FILE *fixed_clock = fopen(DATA_PATH "cpu_fixed.txt", "r");
+    if (fixed_clock) { fclose(fixed_clock); power_enabled = 0; }
+    telemetry_log("POWER", "adaptive CPU=%d; floor444 ceiling%d MHz; fixed30 FPS", power_enabled, cpu_ceiling_mhz);
+    telemetry_log("FRAME", "frame loop start: pump -> draw -> vblank swap, fixed target 30 FPS");
     pvz2_stall_start();
     for (;;) {
         pvz2_stall_frame(frame, PVZ2_FRAME_INPUT);
         const uint64_t begin = sceKernelGetSystemTimeWide();
         controls_tick(begin);
-        if (!pvz2_numeric_poll()) controls_poll();
+        if (!pvz2_visual_poll() && !pvz2_numeric_poll()) controls_poll();
 #if PVZ2_INPUT_REPLAY
         pvz2_input_replay_tick(begin);
 #endif
@@ -371,10 +391,22 @@ static void run_60fps_loop(void) {
         draw_us += drawn - pumped;
         present_us += presented - drawn;
         uint32_t frame_us = (uint32_t)(presented - begin);
+        if (power_enabled) {
+            int wanted = pvz2_power_step_budget(&power, presented, drawn - begin, presented - begin, pvz2_present_budget_us());
+            if (wanted != arm_mhz) {
+                int rc = scePowerSetArmClockFrequency(wanted);
+                arm_mhz = scePowerGetArmClockFrequency();
+                ++clock_changes;
+                if (rc < 0 || arm_mhz != wanted) {
+                    /* A plugin/system policy may own clocks. Do not fight it. */
+                    power_enabled = 0;
+                }
+            }
+        }
         if (frame_us > peak_us) peak_us = frame_us;
-        if (frame_us > 18000) ++slow_frames;
+        if (frame_us > 35000) ++slow_frames;
         ++frame;
-        if ((frame % 300u) == 0u) {
+        if (pvz2_logging_enabled && (frame % 300u) == 0u) {
             pvz2_stall_frame(frame, PVZ2_FRAME_REPORT);
             uint64_t now = sceKernelGetSystemTimeWide();
             uint32_t elapsed = (uint32_t)(now - sample_start);
@@ -404,10 +436,10 @@ static void run_60fps_loop(void) {
             extern void pvz2_gl_profile_stats(unsigned *, unsigned *, unsigned *);
             pvz2_gl_profile_stats(&sampled_draw, &upload, &uploads);
             /* Snapshot on the render thread; storage writes run on the observer. */
-            telemetry_report("60FPS", "frame=%u measured=%u.%02u fps\n"
-                "[PERF] avg_us input=%u game=%u present=%u max=%u over18ms=%u/300 JNI_live=%u created=%u freed=%u heap_used=%u KiB\n"
+            telemetry_report("FRAME", "frame=%u measured=%u.%02u fps\n"
+                "[PERF] avg_us input=%u game=%u present=%u max=%u over35ms=%u/300 JNI_live=%u created=%u freed=%u heap_used=%u KiB\n"
                 "[RENDER] sampled_draw_us=%u upload_us=%u uploads=%u\n"
-                "[GPU] free KiB vram=%u ram=%u slow=%u\n[AUDIOQ] %s\n[SHADERS] %s\n[THREADS] %s\n[TOUCH] %s\n[PIXELS] %s\n[ASSETIO] %s",
+                "[GPU] free KiB vram=%u ram=%u slow=%u\n[AUDIOQ] %s\n[SHADERS] %s\n[THREADS] %s\n[TOUCH] %s\n[PIXELS] %s\n[ASSETIO] %s\n[POWER] arm=%d adaptive=%d changes=%u",
                 frame, fps_x100 / 100u, fps_x100 % 100u,
                 (unsigned)(pump_us / 300), (unsigned)(draw_us / 300),
                 (unsigned)(present_us / 300), peak_us, slow_frames,
@@ -415,7 +447,8 @@ static void run_60fps_loop(void) {
                 sampled_draw, upload, uploads,
                 (unsigned)(vglMemFree(VGL_MEM_VRAM) / 1024),
                 (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024),
-                (unsigned)(vglMemFree(VGL_MEM_SLOW) / 1024), audio, shaders, threads, touch_stats, pixels, assets);
+                (unsigned)(vglMemFree(VGL_MEM_SLOW) / 1024), audio, shaders, threads, touch_stats, pixels, assets,
+                arm_mhz, power_enabled, clock_changes);
             pump_us = draw_us = present_us = 0;
             peak_us = slow_frames = 0;
             sample_start = now;
@@ -428,16 +461,16 @@ int main(void) {
     /* No logger may create a conflicting file until old data is migrated. */
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
     telemetry_reset();
-    telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 60-FPS direct loader");
+    telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 30-FPS direct loader");
 #if PVZ2_INPUT_REPLAY
-    telemetry_log("BUILD", "452-v1.1-rc12-INPUT-REPLAY " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc25-INPUT-REPLAY " __DATE__ " " __TIME__);
     telemetry_log("DIAGNOSTIC", "bounded native input replay; cloned profiles only; NOT a release build");
 #elif PVZ2_STRESS_READ_KIB > 0 || PVZ2_STRESS_READ_LATENCY_US > 0
-    telemetry_log("BUILD", "452-v1.1-rc12-IO-STRESS " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc25-IO-STRESS " __DATE__ " " __TIME__);
     telemetry_log("DIAGNOSTIC", "artificial per-read delay: %u KiB/s plus %u us; NOT a release build",
                   PVZ2_STRESS_READ_KIB, PVZ2_STRESS_READ_LATENCY_US);
 #else
-    telemetry_log("BUILD", "452-v1.1-rc12 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc25 " __DATE__ " " __TIME__);
 #endif
     int32_t epoch_probe = 6;
     bionic_tm local_epoch;
@@ -448,7 +481,7 @@ int main(void) {
                       local_epoch.tm_min, local_epoch.tm_sec, local_epoch.tm_gmtoff);
     if (!pvz2_boot_check(setup_error, sizeof(setup_error))) fatal_error("%s", setup_error);
     telemetry_log("SETUP", "files/dependencies/writable save paths checked; OBB=%s", pvz2_obb_path());
-    clocks_60fps();
+    clocks_init();
     extern void pvz2_init_thread_affinity(void);
     pvz2_init_thread_affinity();
     extern int pvz2_cpu_core_count(void);
@@ -524,7 +557,7 @@ int main(void) {
         fatal_error("The game could not initialize.\nCheck free space on ux0 and reboot your Vita.\n\nKeep ux0:data/pvz2/userdata/loader.log for support.\nYour saves have not been reset.");
     }
     run_lifecycle();
-    run_60fps_loop();
+    run_frame_loop();
     return 0;
 }
 
@@ -540,6 +573,7 @@ void controls_handler_key(int32_t keycode, ControlsAction action) {
     pvz2_input_push_key(translated, action == CONTROLS_ACTION_DOWN);
 }
 void controls_handler_touch(int32_t id, float x, float y, ControlsAction action) {
+    pvz2_controller_touch(id, action != CONTROLS_ACTION_UP, (int)x, (int)y);
     int phase = PVZ2_INPUT_TOUCH_MOVE;
     if (action == CONTROLS_ACTION_DOWN) phase = PVZ2_INPUT_TOUCH_DOWN;
     else if (action == CONTROLS_ACTION_UP) phase = PVZ2_INPUT_TOUCH_UP;
@@ -548,3 +582,7 @@ void controls_handler_touch(int32_t id, float x, float y, ControlsAction action)
 void controls_handler_analog(ControlsStickId which, float x, float y, ControlsAction action) {
     (void)which; (void)x; (void)y; (void)action;
 }
+int controls_handler_pad(uint32_t b, unsigned lx, unsigned ly, unsigned rx, unsigned ry) {
+    return pvz2_controller_pad(b, lx, ly, rx, ry);
+}
+void controls_handler_reset(void) { pvz2_controller_release(); }

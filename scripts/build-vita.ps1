@@ -55,5 +55,5 @@ if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXI
 cmake --build $buildDir
 if ($LASTEXITCODE -ne 0) { throw "Vita build failed with exit code $LASTEXITCODE" }
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-Copy-Item -Force (Join-Path $buildDir 'pvz2-vita-452-60fps.vpk') (Join-Path $outDir 'pvz2-vita-latest.vpk')
+Copy-Item -Force (Join-Path $buildDir 'pvz2-vita-452.vpk') (Join-Path $outDir 'pvz2-vita-latest.vpk')
 Get-FileHash -Algorithm SHA256 (Join-Path $outDir 'pvz2-vita-latest.vpk')

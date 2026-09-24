@@ -30,7 +30,8 @@ class Replay:
         names=('pte_osMutexLock','pte_osMutexUnlock','sem_wait','sem_post','sem_destroy',
                'pthread_mutex_trylock','pthread_mutex_unlock','pthread_mutex_destroy','free','__errno',
                'calloc','pthread_mutex_lock','pthread_join','pthread_cond_timedwait',
-               'pvz2_stall_wait','pvz2_stall_wait_done')
+               'pvz2_stall_wait','pvz2_stall_wait_done',
+               'pvz2_stall_sync','pvz2_stall_sync_done')
         self.hooks={self.syms[n]&~1:n for n in names if n in self.syms}
         u.hook_add(UC_HOOK_CODE,self.hook)
         self.held=set();self.freed=0;self.gate=1;self.mode='ok';self.trylock=0

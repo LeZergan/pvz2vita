@@ -48,6 +48,7 @@ int pvz2_numeric_poll(void) {
         param.dialogMode = SCE_IME_DIALOG_DIALOG_MODE_WITH_CANCEL;
         int rc = sceImeDialogInit(&param);
         if (rc < 0) {
+            controls_restore_sampling();
             atomic_store(&requested, 0);
             telemetry_log("INPUT", "keyboard could not open: 0x%x", (unsigned)rc);
             return 0;
@@ -77,6 +78,7 @@ int pvz2_numeric_poll(void) {
             memset(text, 0, sizeof(text));
         }
         sceImeDialogTerm();
+        controls_restore_sampling();
         memset(output, 0, sizeof(output));
         running = 0;
         atomic_store(&requested, 0);

@@ -56,6 +56,8 @@ static int sceImeDialogGetStatus(void) { return ime_status; }
 static int sceImeDialogGetResult(SceImeDialogResult *r) { r->result=0; r->button=ime_button; return 0; }
 static void sceImeDialogAbort(void) { ime_status=2; }
 static void sceImeDialogTerm(void) { ime_status=0; }
+static unsigned sampling_restores;
+void controls_restore_sampling(void) { assert(ime_status==0); ++sampling_restores; }
 void controls_release_for_dialog(void) { ++releases; }
 ''', encoding='utf-8')
 source = args.audio_source.read_text(encoding='utf-8')
@@ -101,6 +103,7 @@ static void wait_for(atomic_uint *a,unsigned wanted) {
     assert(atomic_load(a)>=wanted);
 }
 static void *clear_thread(void *ctx) {player_bq_clear(NULL); atomic_store((atomic_uint *)ctx,1); return NULL;}
+static void *stop_thread(void *ctx) {player_play_set_state(NULL,SL_PLAYSTATE_STOPPED); atomic_store((atomic_uint *)ctx,1); return NULL;}
 static void test_queue(void) {
     SLDataFormat_PCM format={.formatType=SL_DATAFORMAT_PCM,.numChannels=2,
       .samplesPerSec=32000000,.bitsPerSample=16};
@@ -154,6 +157,29 @@ static void test_queue(void) {
     player_bq_get_state(NULL,&state); assert(state.count==0 && state.playIndex==0);
     pthread_mutex_unlock(&game_audio_lock);
     wait_for(&callback_left,1);
+    /* STOP can be called while FMOD holds the lock its callback needs. It
+     * must quiesce output without joining that blocked callback. */
+    atomic_store(&callback_entered,0); atomic_store(&callback_left,0);
+    pthread_mutex_lock(&game_audio_lock);
+    assert(player_enqueue_common(g_player,buffer,1024)==SL_RESULT_SUCCESS);
+    wait_for(&callback_entered,1);
+    atomic_uint stopped=0; pthread_t stopper;
+    assert(!pthread_create(&stopper,NULL,stop_thread,&stopped));
+    for(unsigned i=0;i<100 && !atomic_load(&stopped);++i)usleep(1000);
+    if(!atomic_load(&stopped)) {
+        fputs("FAIL: STOP joins callback blocked on the caller's lock\n",stderr);
+        _Exit(3);
+    }
+    pthread_join(stopper,NULL);
+    assert(!atomic_load(&callback_left));
+    pthread_mutex_unlock(&game_audio_lock);
+    wait_for(&callback_left,1);
+    player_bq_register_callback(NULL,done,NULL);
+    unsigned previous=atomic_load(&callbacks);
+    assert(player_enqueue_common(g_player,buffer,1024)==SL_RESULT_SUCCESS);
+    usleep(5000); assert(atomic_load(&callbacks)==previous);
+    assert(player_play_set_state(NULL,SL_PLAYSTATE_PLAYING)==SL_RESULT_SUCCESS);
+    wait_for(&callbacks,previous+1);
     player_play_set_state(NULL,SL_PLAYSTATE_STOPPED);
     obj_destroy(obj); assert(!g_player);
 }
@@ -247,6 +273,16 @@ test = test.replace('assert(ime_utf8(full,64,out,sizeof(out))==192);', r'''asser
     pvz2_keyboard_after_frame(); assert(!pvz2_keyboard_commit_pending());
     ime_init_rc=-1; pvz2_text_request(); assert(!pvz2_numeric_poll());
     assert(!pvz2_keyboard_is_showing());
+    assert(sampling_restores==5);
+    ime_init_rc=0;
+    for(unsigned cycle=0;cycle<500;cycle++) {
+        unsigned before=sampling_restores;
+        pvz2_text_request();assert(pvz2_numeric_poll());
+        ime_button=cycle%2;ime_buffer[0]='A';ime_buffer[1]=0;ime_status=2;
+        assert(pvz2_numeric_poll() && sampling_restores==before+1);
+        input_drain_to_buffer(packet,sizeof(packet));pvz2_keyboard_after_frame();
+        assert(!pvz2_keyboard_is_showing());
+    }
     puts("PASS: exact 4.5.2 whole-field selection; empty confirmation delivered; IME accept/cancel/failure, numeric filtering, commit visibility; exact Android key-down/up packets");''')
 test = test.replace('#include "reimpl/opensl_audio.c"', source)
 test += '\n'.join(f'const SLInterfaceID {name} = NULL;' for name in ids)

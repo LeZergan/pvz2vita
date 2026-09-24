@@ -15,7 +15,10 @@
 #include <stdatomic.h>
 
 #include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
 #include <psp2/kernel/clib.h>
+
+int pvz2_logging_enabled;
 
 static const char *k_trace_paths[] = {
     DATA_PATH "loader.log",
@@ -35,7 +38,7 @@ static atomic_uint g_report_write, g_report_read;
 static unsigned g_reports_dropped;
 static int g_reports_enabled;
 
-void telemetry_reports_enable(void) { g_reports_enabled = 1; }
+void telemetry_reports_enable(void) { g_reports_enabled = pvz2_logging_enabled; }
 
 void telemetry_report(const char *tag, const char *fmt, ...) {
     if (!g_reports_enabled) return;
@@ -108,6 +111,9 @@ static int trace_write_active(const char *line, int flags) {
 }
 
 void telemetry_reset(void) {
+    SceIoStat st = {0};
+    pvz2_logging_enabled = sceIoGetstat(GAME_DATA_PATH "logging", &st) >= 0 && SCE_S_ISDIR(st.st_mode);
+    if (!pvz2_logging_enabled) return;
     g_success_count = 0;
     g_last_path = NULL;
     g_active_path = NULL;
@@ -116,6 +122,7 @@ void telemetry_reset(void) {
 }
 
 void telemetry_log(const char *tag, const char *fmt, ...) {
+    if (!pvz2_logging_enabled) return;
     char msg[1536];
     char line[1700];
 
@@ -136,7 +143,7 @@ int telemetry_success_count(void) {
 }
 
 int telemetry_try_line(const char *line) {
-    if (!line || pthread_mutex_trylock(&g_trace_mutex) != 0) return 0;
+    if (!pvz2_logging_enabled || !line || pthread_mutex_trylock(&g_trace_mutex) != 0) return 0;
     int result = trace_write_active(line, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND);
     pthread_mutex_unlock(&g_trace_mutex);
     return result;

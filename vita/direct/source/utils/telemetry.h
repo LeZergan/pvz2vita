@@ -12,6 +12,8 @@
 extern "C" {
 #endif
 
+/* Set once before worker startup; absent logging directory means no diagnostics. */
+extern int pvz2_logging_enabled;
 void telemetry_reset(void);
 void telemetry_log(const char *tag, const char *fmt, ...)
                    __attribute__((format(printf, 2, 3)));

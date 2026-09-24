@@ -25,7 +25,18 @@ jobs:
       - run: python scripts/check-jni-unicode.py
       - run: python scripts/check-placement.py
       - run: python scripts/check-worker-affinity.py
+      - run: python scripts/check-heap-fallback.py
       - run: python scripts/check-pixel-workers.py
+      - run: python scripts/check-etc1-block.py
+      - run: python scripts/check-graphics-gc.py
+      - run: python scripts/check-power-policy.py
+      - run: python scripts/check-controller.py
+      - run: python scripts/check-fps-preference.py
+      - run: python scripts/check-jni-lifetime.py
+      - run: python scripts/check-asset-manager.py
+      - run: python scripts/check-asset-vfd.py
+      - run: python scripts/check-rsb-concurrency.py
+      - run: python scripts/check-fatal-dialog.py
       - run: python scripts/check-texture-units.py
       - run: python scripts/check-time-bridge.py
       - run: python scripts/check-filesystem-bridge.py

@@ -12,6 +12,9 @@
 #include "utils/texture_marks.h"
 #include "utils/telemetry.h"
 #include "utils/pixel_workers.h"
+#include "utils/frame_pacer.h"
+#include "utils/controller.h"
+#include "utils/fps_preference.h"
 
 #include "reimpl/egl.h"
 #include "utils/utils.h"
@@ -57,7 +60,7 @@ void pvz2_gl_shader_stats(char *out, size_t size) {
     pvz2_matrix_uploads_skipped = 0;
     pvz2_pair_hits = pvz2_pair_misses = pvz2_pair_bypasses = 0;
 }
-void pvz2_gl_profile_begin(unsigned frame) { pvz2_profile_sample = (frame % 60) == 0; }
+void pvz2_gl_profile_begin(unsigned frame) { pvz2_profile_sample = pvz2_logging_enabled && (frame % 60) == 0; }
 void pvz2_gl_profile_stats(unsigned *draw, unsigned *upload, unsigned *uploads) {
     *draw = pvz2_profile_draw_us / 5;
     *upload = pvz2_profile_upload_us;
@@ -1302,10 +1305,48 @@ void glClearColor_soloader(GLfloat r, GLfloat g, GLfloat b, GLfloat a) {
     glClearColor(r, g, b, a);
 }
 
-/* Present-side frame-lock period (us) = 1/fps_cap. Read ONCE in gl_init (safe
- * context), used by gl_swap. 0 = no lock. (Reading the file in gl_swap's hot
- * render path crashed boot — fopen there races the engine/loader I/O.) */
-static int g_present_period_us = 0;
+/* Fixed cadence from the first frame, with no runtime override or file I/O. */
+unsigned pvz2_present_budget_us(void) { return PVZ2_FRAME_BUDGET_US; }
+
+/* Clip before calling vitaGL: negative scissor origins can retain the original
+ * width in its region conversion, stretching the rectangle at screen edges. */
+static void controller_cursor_rect(int x, int y, int width, int height) {
+    int right = x + width, top = y + height;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (right > 960) right = 960;
+    if (top > 544) top = 544;
+    if (right <= x || top <= y) return;
+    glScissor(x, y, right - x, top - y);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+/* Cursor uses only scissored color clears: no textures, shader compilation,
+ * dynamic vertex buffers or resource uploads. Restore all touched GL state. */
+static void controller_draw_cursor(void) {
+    int x, y;
+    if (!pvz2_controller_cursor(&x, &y)) return;
+    GLint box[4], fbo; GLfloat color[4]; GLboolean mask[4];
+    GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    glGetIntegerv(GL_SCISSOR_BOX, box);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, color);
+    glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glEnable(GL_SCISSOR_TEST); glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    y = 543 - y;
+    glClearColor(0.03f, 0.08f, 0.03f, 1);
+    controller_cursor_rect(x-9, y-3, 19, 7);
+    controller_cursor_rect(x-3, y-9, 7, 19);
+    glClearColor(0.75f, 1, 0.3f, 1);
+    controller_cursor_rect(x-7, y-1, 15, 3);
+    controller_cursor_rect(x-1, y-7, 3, 15);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glScissor(box[0], box[1], box[2], box[3]);
+    glClearColor(color[0], color[1], color[2], color[3]);
+    glColorMask(mask[0], mask[1], mask[2], mask[3]);
+    if (!scissor) glDisable(GL_SCISSOR_TEST);
+}
 
 static void pvz2_initialize_vitagl(int ram_reserve_mb) {
     /* This return value means RESOLUTION FALLBACK, not initialization success.
@@ -1406,25 +1447,13 @@ void gl_init() {
     { FILE *cm = fopen(DATA_PATH "cached_mem.txt", "r");
       if (cm) { fclose(cm); vglUseCachedMem(GL_TRUE);
                 l_info("gl_init: vglUseCachedMem(TRUE) — cached internal pools (faster CPU uploads) [EXPERIMENTAL]"); } }
-    /* Affinity zero inherits the creator's core; main is pinned to core 0.
-     * Put per-frame GPU resource reclamation on a normal worker core. */
-    vglSetupGarbageCollector(160, 0x00020000);
-    telemetry_log("CPU", "vitaGL garbage collector requested core1 priority160");
+    vglSetupGarbageCollector(160, 0x00070000);
+    telemetry_log("CPU", "vitaGL garbage collector shares cores0-2 priority160");
     pvz2_initialize_vitagl(ram_reserve_mb);
-    /* The 4.5.2 main loop targets 60 Hz through vblank presentation. */
-    {
-        FILE *nv = fopen(DATA_PATH "novsync.txt", "r");
-        if (nv) { fclose(nv); vglWaitVblankStart(GL_FALSE); l_info("presenter: vsync OFF (novsync.txt) — max throughput"); }
-        else { vglWaitVblankStart(GL_TRUE); l_info("presenter: vsync ON (precise vblank lock)"); }
-    }
+    vglWaitVblankStart(GL_TRUE);
 
-    /* THE FIX (2026-06-22): shark_init returns 0 (libshacccg loads fine!), but
-     * vitaGL's own startShaderCompiler uses vglMalloc — which fails — so it never
-     * sets its is_shark_online flag and glCompileShader refuses to compile ANY
-     * shader (even trivial, "(no info log)"). Initialize shark ourselves with the
-     * SYSTEM allocator (malloc/free) — which works — and then force vitaGL's
-     * global is_shark_online flag true so glCompileShader uses our loaded
-     * compiler instead of re-running its failing vglMalloc init. */
+    /* Initialize the compiler with the system allocator, then expose the
+     * successful initialization to vitaGL so it does not initialize twice. */
     extern GLboolean is_shark_online;          /* vitaGL global (gxm.c) */
     shark_set_allocators(malloc, free);
     int sk = shark_init("ur0:data/external/libshacccg.suprx");
@@ -1442,16 +1471,9 @@ void gl_init() {
         fatal_error("The shader compiler could not load (0x%08x).\nReinstall libshacccg.suprx with ShaRKBR33D,\nthen reboot your Vita.\n\nExpected: ur0:data/libshacccg.suprx\nor ur0:data/external/libshacccg.suprx", (unsigned)sk);
     }
 
-    /* [PvZ2 BLACK-SCREEN FIX] PvZ2 does NOT honor our framebuffer-size override:
-     * it renders to the SCREEN at the full surface size it got from
-     * onSurfaceChanged (960x544, confirmed via [PvZ2 VP] glViewport(0,0 960x544)
-     * main=1), regardless of the 640x363 we requested. Render-scale therefore has
-     * the game draw a 960x544 viewport into a 640x363 FBO -> the content maps
-     * outside the buffer and only scales when dynres<1.0 -> black at full res.
-     * So disable render-scale for PvZ2 and render straight to the native display
-     * (g_rs_active stays FALSE; glBindFramebuffer(0) is NOT redirected; gl_swap
-     * presents the real FB0 directly). Set no_rs.txt away / rs.txt to force-enable
-     * if a future perf pass wants low-res upscale done CORRECTLY. */
+    /* Native resolution is the supported default. The engine uses surface
+     * dimensions for its viewport; the experimental rs.txt override requires
+     * a smaller render target before enabling the offscreen path. */
     {
         FILE *force_rs = fopen(DATA_PATH "rs.txt", "r");
         if (force_rs) { fclose(force_rs);
@@ -1480,19 +1502,8 @@ void gl_init() {
         }
     }
 
-    /* Present-side frame lock period from fps_cap.txt (read once, here, where
-     * file I/O is safe — NOT in gl_swap). */
-    {
-        FILE *cf = fopen(DATA_PATH "fps_cap.txt", "r");
-        if (cf) {
-            int fps = 0;
-            if (fscanf(cf, "%d", &fps) == 1 && fps > 0 && fps <= 120) {
-                g_present_period_us = 1000000 / fps;
-            }
-            fclose(cf);
-        }
-        l_info("present frame-lock period = %d us", g_present_period_us);
-    }
+    telemetry_log("PACING", "fixed 30 FPS; bounded sleep, no spin");
+
 }
 
 void gl_swap() {
@@ -1519,27 +1530,18 @@ void gl_swap() {
         glBlitFramebuffer(0, 0, blit_w, blit_h, 0, RS_NATIVE_H, RS_NATIVE_W, 0,
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
     }
-    /* PRESENT-SIDE FRAME LOCK (anti-stutter 2026-06-30): the render thread
-     * presents independently of the sim, so on a heavy 3D scene frames land at
-     * 18-25ms and vsync snaps each to either 16.7ms or 33ms -> the DISPLAY beats
-     * between 60 and 30fps = persistent judder, even on a static camera (the sim
-     * pace alone can't fix this — it doesn't gate the present). Enforce a steady
-     * minimum present interval so the display rate is consistent (no beating).
-     * Period = 1/fps_cap.txt (e.g. 30 -> 33.3ms). fps_cap 0/absent = off. */
-    if (g_present_period_us > 0) {
-        static uint64_t s_last_present_us = 0;
-        uint64_t pnow = sceKernelGetSystemTimeWide();
-        if (s_last_present_us) {
-            uint64_t el = pnow - s_last_present_us;
-            if (el < (uint64_t)g_present_period_us) {
-                sceKernelDelayThread((SceUInt)((uint64_t)g_present_period_us - el));
-            }
-        }
-        s_last_present_us = sceKernelGetSystemTimeWide();
+    controller_draw_cursor();
+    /* Explicit frame caps and the no-vsync fallback use absolute deadlines.
+     * Normal 60Hz presentation remains vblank-paced. Carry fractional time
+     * and scheduler oversleep; reset the schedule after a long frame. */
+    if (PVZ2_TARGET_FPS) {
+        static Pvz2FramePacer pacer;
+        unsigned delay = pvz2_frame_delay(&pacer, sceKernelGetSystemTimeWide());
+        if (delay) sceKernelDelayThread(delay);
     }
     /* Present without synchronous framebuffer readback diagnostics. */
     launch_state_mark_gl_phase(1);   /* in vglSwapBuffers (present) */
-    vglSwapBuffers(pvz2_numeric_active() ? GL_TRUE : GL_FALSE);
+    vglSwapBuffers((pvz2_numeric_active() || pvz2_visual_active()) ? GL_TRUE : GL_FALSE);
     launch_state_mark_gl_phase(0);   /* present returned */
     if (g_rs_active) {
         glBindFramebuffer(GL_FRAMEBUFFER, g_rs_fbo); /* next frame renders into the FBO again */
@@ -2542,15 +2544,7 @@ static inline void force_complete_filter(GLenum target) {
  * format"); the prebuilt vitaGL builds some ETC1 textures with an inconsistent control word,
  * garbage/black on real Vita too. Decode ETC1 -> RGBA8 in the loader so a clean, universally-
  * sampleable RGBA8 texture is uploaded (no ETC1 in the pipeline). Gate: no_etc1_decode.txt */
-static const int k_etc1_mod[8][4] = {
-    { 2, 8, -2, -8 }, { 5, 17, -5, -17 }, { 9, 29, -9, -29 }, { 13, 42, -13, -42 },
-    { 18, 60, -18, -60 }, { 24, 80, -24, -80 }, { 33, 106, -33, -106 }, { 47, 183, -47, -183 }
-};
-static inline uint8_t etc1_clamp(int v) { return v < 0 ? 0 : (v > 255 ? 255 : (uint8_t)v); }
-/* ★ v1321: REUSED heap scratch for the ETC1 decode (allocated once, grown rarely, NEVER
- * freed per-decode) so the big transient RGBA8 buffers (up to 8MB) don't churn/fragment
- * the heap. Fixes the real-Vita frame-7 OOM (heap ~99% used but largest_free only 14KB ->
- * a 1MB tex malloc failed). One stable block instead of 9x malloc/free; caller must NOT free. */
+/* Reused output storage: fused ETC1 reduction never materializes a full atlas. */
 static uint8_t *g_etc1_scratch = NULL;
 static size_t   g_etc1_scratch_sz = 0;
 static uint8_t *etc1_scratch(size_t need) {
@@ -2562,47 +2556,17 @@ static uint8_t *etc1_scratch(size_t need) {
     }
     return g_etc1_scratch;
 }
-static uint8_t *etc1_decode_rgba8(const uint8_t *src, int w, int h) {
-    uint8_t *out = etc1_scratch((size_t)w * (size_t)h * 4u);   /* reused, never freed per-call */
-    if (!out) return NULL;
-    int bw = (w + 3) / 4, bh = (h + 3) / 4;
-    for (int by = 0; by < bh; by++) {
-        for (int bx = 0; bx < bw; bx++) {
-            const uint8_t *b = src + (size_t)((by * bw) + bx) * 8u;
-            uint32_t hi = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
-            uint32_t pix = ((uint32_t)b[4] << 24) | ((uint32_t)b[5] << 16) | ((uint32_t)b[6] << 8) | b[7];
-            int flip = hi & 1, diff = (hi >> 1) & 1;
-            int base[2][3];
-            if (diff) {
-                int r = (hi >> 27) & 0x1f, g = (hi >> 19) & 0x1f, bl = (hi >> 11) & 0x1f;
-                int dr = (hi >> 24) & 7, dg = (hi >> 16) & 7, db = (hi >> 8) & 7;
-                if (dr > 3) dr -= 8; if (dg > 3) dg -= 8; if (db > 3) db -= 8;
-                int r2 = r + dr, g2 = g + dg, b2 = bl + db;
-                base[0][0] = (r << 3) | (r >> 2); base[0][1] = (g << 3) | (g >> 2); base[0][2] = (bl << 3) | (bl >> 2);
-                base[1][0] = (r2 << 3) | (r2 >> 2); base[1][1] = (g2 << 3) | (g2 >> 2); base[1][2] = (b2 << 3) | (b2 >> 2);
-            } else {
-                int r1 = (hi >> 28) & 0xf, g1 = (hi >> 20) & 0xf, b1 = (hi >> 12) & 0xf;
-                int r2 = (hi >> 24) & 0xf, g2 = (hi >> 16) & 0xf, b2 = (hi >> 8) & 0xf;
-                base[0][0] = (r1 << 4) | r1; base[0][1] = (g1 << 4) | g1; base[0][2] = (b1 << 4) | b1;
-                base[1][0] = (r2 << 4) | r2; base[1][1] = (g2 << 4) | g2; base[1][2] = (b2 << 4) | b2;
-            }
-            int cw[2] = { (int)((hi >> 5) & 7), (int)((hi >> 2) & 7) };
-            for (int i = 0; i < 16; i++) {
-                int x = i >> 2, y = i & 3;
-                int px = bx * 4 + x, py = by * 4 + y;
-                if (px >= w || py >= h) continue;
-                int sub = flip ? (y >> 1) : (x >> 1);
-                int msb = (pix >> (i + 16)) & 1, lsb = (pix >> i) & 1;
-                int m = k_etc1_mod[cw[sub]][(msb << 1) | lsb];
-                uint8_t *o = out + ((size_t)py * w + px) * 4u;
-                o[0] = etc1_clamp(base[sub][0] + m);
-                o[1] = etc1_clamp(base[sub][1] + m);
-                o[2] = etc1_clamp(base[sub][2] + m);
-                o[3] = 255;
-            }
-        }
-    }
+static uint8_t *etc1_decode_rgba8_scaled(const uint8_t *src, int w, int h, int half) {
+    if (w < 1 || h < 1 || w > 4096 || h > 4096) return NULL;
+    size_t bytes = (size_t)(half ? w / 2 : w) * (half ? h / 2 : h) * 4u;
+    if (!bytes) return NULL;
+    uint8_t *out = etc1_scratch(bytes);
+    if (!out || !pvz2_pixels_convert_into(src, w, h,
+        half ? PVZ2_ETC1_HALF : PVZ2_ETC1_RGBA, out, bytes)) return NULL;
     return out;
+}
+static uint8_t *etc1_decode_rgba8(const uint8_t *src, int w, int h) {
+    return etc1_decode_rgba8_scaled(src, w, h, 0);
 }
 static int etc1_decode_enabled(void) {
     static int e = -1;
@@ -2610,8 +2574,34 @@ static int etc1_decode_enabled(void) {
     return e;
 }
 
+static int texture_reduce_dimensions(int width, int height) {
+        static int g_tex_dsamp_min = -1;
+        if (g_tex_dsamp_min < 0) {
+            g_tex_dsamp_min = 1024;
+            FILE *tf = fopen(DATA_PATH "tex_full.txt", "r");
+            if (tf) { fclose(tf); g_tex_dsamp_min = 1 << 30; }  /* disabled */
+            FILE *mf = fopen(DATA_PATH "tex_dsamp_min.txt", "r");
+            if (mf) { int v = 0; if (fscanf(mf, "%d", &v) == 1 && v >= 64 && v <= 4096) g_tex_dsamp_min = v; fclose(mf); }
+        }
+    return width >= g_tex_dsamp_min && height >= g_tex_dsamp_min;
+}
+
+static void dsamp_mark(GLuint id);
+static int dsamp_is(GLuint id);
+static int texfail_is(GLuint id);
 static void texture_marks_reset(GLuint id);
 static void texture_error(GLenum err, GLsizei width, GLsizei height);
+static void texture_placeholder(GLenum target, int width, int height);
+static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalformat,
+                       GLsizei width, GLsizei height, GLint border,
+                       GLenum format, GLenum type, const void *pixels);
+
+/* ETC1 stores complete 4x4 blocks, including at partial image edges. Check
+ * the payload before the decoder reads it, and bound scratch allocation. */
+static int etc1_payload_valid(int width, int height, int bytes) {
+    if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || bytes <= 0) return 0;
+    return (uint64_t)((width + 3) / 4) * ((height + 3) / 4) * 8 == (uint64_t)bytes;
+}
 
 /* Uploads are cold paths. Loader-owned drawing can bypass our wrappers. */
 static void texture_sync_upload_binding(GLenum target) {
@@ -2631,7 +2621,6 @@ void glCompressedTexImage2D_soloader(GLenum target, GLint level, GLenum internal
                                      GLsizei width, GLsizei height, GLint border,
                                      GLsizei imageSize, const void *data) {
     texture_sync_upload_binding(target);
-    if (level == 0 && target == GL_TEXTURE_2D) texture_marks_reset(s_texlru_bound);
     static unsigned int s_count = 0;
     s_count++;
     if (s_count <= 300) l_info("UPLOAD glCompressedTexImage2D #%u %dx%d ifmt=0x%X size=%d data=%p",
@@ -2655,18 +2644,38 @@ void glCompressedTexImage2D_soloader(GLenum target, GLint level, GLenum internal
 
     /* Decode ETC1 -> RGBA8 and upload as a normal texture (removes base format 0x84000000
      * from the pipeline -> samplable on Vita3K, correct on real Vita). */
-    if (internalformat == GL_ETC1_RGB8_OES && data && width > 0 && height > 0 && etc1_decode_enabled()) {
-        uint8_t *rgba = etc1_decode_rgba8((const uint8_t *)data, width, height);
-        if (rgba) {
-            glTexImage2D(target, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-            /* v1321: rgba is the reused dedicated memblock (etc1_scratch) — do NOT free it */
-            force_complete_filter(target);
-            static unsigned s_ed = 0;
-            if (s_ed++ < 40) l_info("[ETC1] decoded tex=%d %dx%d -> RGBA8", bound_texture, (int)width, (int)height);
+    if (internalformat == GL_ETC1_RGB8_OES && etc1_decode_enabled()) {
+        if (!etc1_payload_valid(width, height, imageSize)) {
+            texture_error(GL_INVALID_VALUE, width, height);
             return;
         }
+        int half = texture_reduce_dimensions(width, height);
+        uint8_t *rgba = data ? etc1_decode_rgba8_scaled(data, width, height, half) : NULL;
+        if (data && !rgba) {
+            texture_error(GL_OUT_OF_MEMORY, width, height);
+            texture_placeholder(target, width, height);
+            return;
+        }
+        /* Both native upload branches check failure before filter setup can
+         * consume its error. The reduced branch already owns final-size pixels. */
+        if (half) {
+            /* Compressed storage is sampled art, including a NULL definition.
+             * Decode/box-filter directly into the final-size CPU buffer. */
+            texture_marks_reset(s_texlru_bound);
+            (void)drain_gl_errors_limited();
+            glTexImage2D(target, 0, GL_RGBA, width / 2, height / 2, border,
+                         GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            GLenum error = glGetError();
+            texture_error(error, width, height);
+            if (error) texture_placeholder(target, width, height);
+            else dsamp_mark(s_texlru_bound);
+        } else glTexImage2D_pvz2_impl(target, 0, GL_RGBA, width, height, border,
+                                    GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        force_complete_filter(target);
+        return; /* rgba belongs to the reusable decoder scratch block. */
     }
 
+    if (level == 0 && target == GL_TEXTURE_2D) texture_marks_reset(s_texlru_bound);
     uint8_t *zero_compressed = NULL;
     const void *upload_data = data;
     int zero_upload = 0;
@@ -2690,6 +2699,10 @@ void glCompressedTexImage2D_soloader(GLenum target, GLint level, GLenum internal
     glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, upload_data);
     GLenum err = glGetError();
     texture_error(err, width, height);
+    static unsigned compressed_errors;
+    if (err && compressed_errors++ < 16)
+        telemetry_log("TEXTURE_COMPRESSED", "id=%u level=%d size=%dx%d format=0x%x bytes=%d error=0x%x",
+            s_texlru_bound, level, width, height, internalformat, imageSize, err);
     texlru_after_upload((GLint)s_texlru_bound, imageSize, err);
     /* OOM FALLBACK (2026-06-22): when the compressed upload won't fit (PVR_PSP2
      * texture-object/pool ceiling — eviction gets close but a burst residual
@@ -2698,14 +2711,8 @@ void glCompressedTexImage2D_soloader(GLenum target, GLint level, GLenum internal
      * RGBA placeholder so the texture is VALID: it samples as a flat colour, but
      * the loader STOPS WAITING and the menu renders instead of stalling. */
     if (err == 0x0505 /* GL_OUT_OF_MEMORY */ && level == 0 && target == 0x0DE1) {
-        static const uint8_t ph_px[4] = { 0, 0, 0, 255 };
-        (void)drain_gl_errors_limited();
-        glTexImage2D(target, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, ph_px);
-        GLenum ph_err = glGetError();
-        static unsigned int s_ph = 0;
-        if (s_ph++ < 24U)
-            l_info("glCompressedTexImage2D: OOM -> 1x1 placeholder (tex=%d ph_err=0x%X)", bound_texture, (unsigned)ph_err);
-        err = ph_err;
+        texture_placeholder(target, width, height);
+        err = GL_NO_ERROR;
     }
     force_complete_filter(target);
 
@@ -2741,6 +2748,37 @@ void glCompressedTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffse
     /* Mip levels >0 are dropped (see glCompressedTexImage2D_soloader); their
      * sub-image fills target a non-existent level, so skip them. */
     if (level > 0) {
+        return;
+    }
+    if (format == GL_ETC1_RGB8_OES && etc1_decode_enabled()) {
+        texture_sync_upload_binding(target);
+        if (texfail_is(s_texlru_bound)) return;
+        if (!data || !etc1_payload_valid(width, height, imageSize)) {
+            texture_error(GL_INVALID_VALUE, width, height);
+            return;
+        }
+        int half = dsamp_is(s_texlru_bound);
+        if (xoffset < 0 || yoffset < 0 ||
+            (half && ((xoffset & 1) || (yoffset & 1) || width < 2 || height < 2))) {
+            texture_error(GL_INVALID_VALUE, width, height);
+            return;
+        }
+        uint8_t *rgba = etc1_decode_rgba8_scaled(data, width, height, half);
+        if (!rgba) { texture_error(GL_OUT_OF_MEMORY, width, height); return; }
+        /* Update the existing atlas, including nonzero offsets. Defining a
+         * new image here discarded the rest of the atlas at offset 0, while
+         * all nonzero-offset updates were silently ignored. */
+        if (half) {
+            (void)drain_gl_errors_limited();
+            GLint old_align = push_unpack_alignment_one();
+            glTexSubImage2D(target, level, xoffset / 2, yoffset / 2, width / 2, height / 2,
+                           GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            GLenum error = glGetError();
+            pop_unpack_alignment(old_align);
+            texture_error(error, width, height);
+            force_complete_filter(target);
+        } else glTexSubImage2D_soloader(target, level, xoffset, yoffset, width, height,
+                                      GL_RGBA, GL_UNSIGNED_BYTE, rgba);
         return;
     }
     if (xoffset == 0 && yoffset == 0) {
@@ -3081,15 +3119,7 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
      * disables; tex_dsamp_min.txt sets min dim (default 1024). */
     if (level == 0 && target == 0x0DE1 && pixels &&
         format == GL_RGBA && type == GL_UNSIGNED_BYTE) {
-        static int g_tex_dsamp_min = -1;
-        if (g_tex_dsamp_min < 0) {
-            g_tex_dsamp_min = 1024;
-            FILE *tf = fopen(DATA_PATH "tex_full.txt", "r");
-            if (tf) { fclose(tf); g_tex_dsamp_min = 1 << 30; }  /* disabled */
-            FILE *mf = fopen(DATA_PATH "tex_dsamp_min.txt", "r");
-            if (mf) { int v = 0; if (fscanf(mf, "%d", &v) == 1 && v >= 64 && v <= 4096) g_tex_dsamp_min = v; fclose(mf); }
-        }
-        if (width >= g_tex_dsamp_min && height >= g_tex_dsamp_min) {
+        if (texture_reduce_dimensions(width, height)) {
             uint8_t *half = downsample_rgba8888_2x((const uint8_t *)pixels, width, height);
             if (half) {
                 (void)drain_gl_errors_limited();
@@ -3097,6 +3127,7 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
                              format, type, half);
                 if (glGetError() == GL_NO_ERROR) {
                     dsamp_mark((GLuint)s_texlru_bound);
+                    force_complete_filter(target);
                     static unsigned int s = 0;
                     if (s++ < 32U) l_info("glTexImage2D PROACTIVE halve %dx%d->%dx%d tex=%u VRAM=%uKB",
                                           width, height, width >> 1, height >> 1, (unsigned)s_texlru_bound,
@@ -3116,6 +3147,10 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
     glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
     GLenum e = glGetError();
     texture_error(e, width, height);
+    static unsigned image_errors;
+    if (e && image_errors++ < 16)
+        telemetry_log("TEXTURE_IMAGE", "id=%u level=%d size=%dx%d format=0x%x type=0x%x data=%d error=0x%x",
+            s_texlru_bound, level, width, height, format, type, pixels != NULL, e);
     { static unsigned int s_vr = 0; if (s_vr++ < 120U && width >= 256 && height >= 256)
         l_info("VRAMTRACK glTexImage2D %dx%d ifmt=0x%X data=%p -> err=0x%X VRAM=%uKB RAM=%uKB",
                width, height, (unsigned)internalformat, pixels, (unsigned)e,
@@ -3139,6 +3174,7 @@ static void glTexImage2D_pvz2_impl(GLenum target, GLint level, GLint internalfor
                      format, type, pixels ? (const void *)half : NULL);
         if (glGetError() == GL_NO_ERROR) {
             dsamp_mark((GLuint)s_texlru_bound);
+            force_complete_filter(target);
             static unsigned int s = 0;
             if (s++ < 24U) l_warn("glTexImage2D OOM: halved %dx%d->%dx%d tex=%u (dsamp) — art may blur",
                                   width, height, width >> 1, height >> 1, (unsigned)s_texlru_bound);
@@ -3502,6 +3538,10 @@ void glTexSubImage2D_soloader(GLenum target, GLint level, GLint xoffset,
                     upload_pixels);
     GLenum err = glGetError();
     pop_unpack_alignment(old_unpack_align);
+    texture_error(err, width, height);
+    static unsigned sub_errors;
+    if (err && sub_errors++ < 16) telemetry_log("TEXTURE_SUB", "id=%u level=%d xy=%d,%d size=%dx%d format=0x%x type=0x%x error=0x%x",
+        s_texlru_bound, level, xoffset, yoffset, width, height, upload_format, upload_type, err);
     force_complete_filter(target);
     free(sub_ds);
 
@@ -4597,6 +4637,10 @@ void glDrawElements_soloader(GLenum mode, GLsizei count, GLenum type, const void
 }
 
 void glTexImage2D_pvz2(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels) {
+    if (!pvz2_logging_enabled) {
+        glTexImage2D_pvz2_impl(target, level, internalformat, width, height, border, format, type, pixels);
+        return;
+    }
     unsigned start = (unsigned)sceKernelGetSystemTimeWide();
     glTexImage2D_pvz2_impl(target, level, internalformat, width, height, border, format, type, pixels);
     pvz2_profile_upload_us += (unsigned)sceKernelGetSystemTimeWide() - start;

@@ -67,6 +67,11 @@ assert (d/'pvz2/config.kv').read_bytes()==b'OLD'
 assert (d/'pvz2/userdata/config.kv').read_bytes()==b'NEW'
 assert not (d/'pvz2/userdata/.layout-v1').exists()
 d=case('new-install'); assert run(layout,cwd=d).startswith('1\n')
+d=case('logging-first-install'); (d/'pvz2/logging').mkdir()
+(d/'pvz2/logging/keep.txt').write_bytes(b'KEEP')
+assert run(layout,cwd=d).startswith('1\n')
+assert (d/'pvz2/logging/keep.txt').read_bytes()==b'KEEP'
+assert not (d/'pvz2/userdata/logging').exists()
 print('PASS: real migration, save/log bytes, repeat boot, interrupted resume, conflicts, fresh setup')
 
 # Run the actual path mapper with two threads deliberately overlapping its

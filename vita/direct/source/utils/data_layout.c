@@ -10,7 +10,7 @@
 
 static int keep_at_root(const char *name) {
     return !strcmp(name, ".") || !strcmp(name, "..") || !strcmp(name, "userdata") ||
-        !strcmp(name, "libPVZ2.so") || !strcmp(name, "game.obb") ||
+        !strcmp(name, "logging") || !strcmp(name, "libPVZ2.so") || !strcmp(name, "game.obb") ||
         !strcmp(name, "main.147.com.ea.game.pvz2_row.obb");
 }
 

@@ -7,6 +7,7 @@
 
 #include "reimpl/rsb_index_vita.h"
 #include "utils/logger.h"
+#include "utils/cache_crc.h"
 #include "utils/boot_check.h"
 #include "utils/telemetry.h"
 #include "reimpl/pthr.h"
@@ -47,6 +48,7 @@ struct Entry {
 };
 
 pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t g_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 bool g_tried = false;
 bool g_loaded = false;
 std::unordered_map<std::string, Entry> g_entries;
@@ -87,12 +89,12 @@ bool load_bundled_index(uint64_t file_size, const std::vector<uint8_t> &head) {
     uint32_t header[8] = {};
     bool ok = std::fread(header, sizeof(header), 1, file) == 1 &&
         header[0] == 0x32495a50u && header[1] == 1 && header[2] == file_size &&
-        header[3] == mz_crc32(0, head.data(), head.size()) && header[7] == 0 &&
+        header[3] == pvz2_cache_crc32(0, head.data(), head.size()) && header[7] == 0 &&
         header[4] > 0 && header[4] <= 16384 && header[5] <= 2 * 1024 * 1024 &&
         header[5] >= header[4] * 37u;
     std::vector<uint8_t> bytes(ok ? header[5] : 0);
     if (ok) ok = std::fread(bytes.data(), 1, bytes.size(), file) == bytes.size() &&
-                 std::fgetc(file) == EOF && mz_crc32(0, bytes.data(), bytes.size()) == header[6];
+                 std::fgetc(file) == EOF && pvz2_cache_crc32(0, bytes.data(), bytes.size()) == header[6];
     std::fclose(file);
     if (!ok) return false;
     std::unordered_map<std::string, Entry> parsed;
@@ -263,7 +265,7 @@ bool load_index() {
 
 } // namespace
 
-/* g_lock is held by the caller. Check both source and cached output before
+/* g_cache_lock is held by the caller. Check both source and cached output before
  * reusing a prior run's block; interrupted/corrupt/stale caches are rebuilt. */
 static std::unordered_map<uint32_t, std::string> g_block_cache;
 static bool crc_range(const char *path, uint32_t offset, uint32_t length,
@@ -279,7 +281,7 @@ static bool crc_range(const char *path, uint32_t offset, uint32_t length,
     while (ok && length) {
         size_t n = length < sizeof(bytes) ? length : sizeof(bytes);
         if (std::fread(bytes, 1, n, file) != n) { ok = false; break; }
-        crc = mz_crc32(crc, bytes, n);
+        crc = pvz2_cache_crc32(crc, bytes, n);
         length -= n;
     }
     std::fclose(file);
@@ -297,6 +299,9 @@ static bool cached_block_valid(const char *path, const Entry &entry) {
                  crc_range(path, 0, entry.unpacked_size, h[3], true);
 }
 static bool cache_block(Entry &entry) {
+    /* Published paths never change, so JNI callers can safely copy c_str()
+     * after the cache lock has been released. */
+    if (!entry.cache_path.empty()) return true;
     auto cached = g_block_cache.find(entry.block_offset);
     if (cached != g_block_cache.end()) {
         entry.cache_path = cached->second;
@@ -342,7 +347,7 @@ static bool cache_block(Entry &entry) {
         if (!stream.avail_in && remaining) {
             size_t n = remaining < in.size() ? remaining : in.size();
             if (std::fread(in.data(), 1, n, input) != n) { ok = false; break; }
-            source_crc = mz_crc32(source_crc, in.data(), n);
+            source_crc = pvz2_cache_crc32(source_crc, in.data(), n);
             remaining -= static_cast<uint32_t>(n);
             stream.next_in = in.data();
             stream.avail_in = static_cast<unsigned>(n);
@@ -358,7 +363,7 @@ static bool cache_block(Entry &entry) {
             ok = false; break;
         }
         if (std::fwrite(out.data(), 1, n, output) != n) { ok = false; break; }
-        output_crc = mz_crc32(output_crc, out.data(), n);
+        output_crc = pvz2_cache_crc32(output_crc, out.data(), n);
         written += static_cast<uint32_t>(n);
         g_written.store(written, std::memory_order_relaxed);
     }
@@ -366,7 +371,7 @@ static bool cache_block(Entry &entry) {
     while (ok && remaining) {
         size_t n = remaining < in.size() ? remaining : in.size();
         if (std::fread(in.data(), 1, n, input) != n) { ok = false; break; }
-        source_crc = mz_crc32(source_crc, in.data(), n);
+        source_crc = pvz2_cache_crc32(source_crc, in.data(), n);
         remaining -= n;
     }
     if (initialized) mz_inflateEnd(&stream);
@@ -405,48 +410,50 @@ static bool cache_block(Entry &entry) {
     return true;
 }
 
-extern "C" const char *vita_rsb_locate(const char *name, uint64_t *offset, uint32_t *size) {
-    uint64_t ignored_offset;
-    uint32_t ignored_size;
-    int texture;
-    if (!vita_rsb_find(name, &ignored_offset, &ignored_size, &texture) || texture) return nullptr;
+/* Index keys and all fields except cache_path are immutable after load_index.
+ * Extraction holds its own lock: unrelated lookups must not wait for disk I/O
+ * or decompression. Return a stable entry after just one normalize/find. */
+static Entry *rsb_lookup_entry(const char *name) {
+    ++g_queries;
+    const std::string key = normalize(name);
     pthread_mutex_lock(&g_lock);
-    auto &entry = g_entries.at(normalize(name));
-    const char *path = pvz2_obb_path();
-    if (entry.block_size) {
-        if (!cache_block(entry)) path = nullptr;
-        else path = entry.cache_path.c_str();
-    }
-    if (path) {
-        *offset = entry.block_size ? entry.within_block : entry.offset;
-        *size = entry.size;
+    if (!g_tried) { g_tried = true; g_loaded = load_index(); }
+    Entry *entry = nullptr;
+    if (g_loaded) {
+        auto it = g_entries.find(key);
+        if (it != g_entries.end()) entry = &it->second;
     }
     pthread_mutex_unlock(&g_lock);
+    if (!entry && name && *name) ++g_misses;
+    return entry;
+}
+
+extern "C" const char *vita_rsb_locate(const char *name, uint64_t *offset, uint32_t *size) {
+    Entry *found = rsb_lookup_entry(name);
+    if (!found || found->compressed) return nullptr;
+    auto &entry = *found;
+    const char *path = pvz2_obb_path();
+    if (entry.block_size) {
+        pthread_mutex_lock(&g_cache_lock);
+        if (!cache_block(entry)) path = nullptr;
+        else path = entry.cache_path.c_str();
+        pthread_mutex_unlock(&g_cache_lock);
+    }
+    if (path) {
+        if (offset) *offset = entry.block_size ? entry.within_block : entry.offset;
+        if (size) *size = entry.size;
+    }
     return path;
 }
 
 extern "C" int vita_rsb_find(const char *guest_path, uint64_t *offset,
                               uint32_t *size, int *compressed) {
-    ++g_queries;
-    pthread_mutex_lock(&g_lock);
-    if (!g_tried) {
-        g_tried = true;
-        g_loaded = load_index();
-    }
-
-    int result = 0;
-    if (g_loaded) {
-        const auto it = g_entries.find(normalize(guest_path));
-        if (it != g_entries.end()) {
-            if (offset) *offset = it->second.offset;
-            if (size) *size = it->second.size;
-            if (compressed) *compressed = it->second.compressed ? 1 : 0;
-            result = 1;
-        }
-    }
-    pthread_mutex_unlock(&g_lock);
-    if (!result && guest_path && *guest_path) ++g_misses;
-    return result;
+    const Entry *entry = rsb_lookup_entry(guest_path);
+    if (!entry) return 0;
+    if (offset) *offset = entry->offset;
+    if (size) *size = entry->size;
+    if (compressed) *compressed = entry->compressed ? 1 : 0;
+    return 1;
 }
 
 /* No index lock: telemetry must keep running while a worker extracts a block. */

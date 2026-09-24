@@ -129,19 +129,24 @@ static SLresult unsupported_required_interfaces(SLuint32 count,
 }
 
 static void opensl_call_queue_callback(OpenslPlayer *p) {
-    if (!p || p->thread_stop) {
-        return;
-    }
-    if (p->android_callback) {
+    if (!p) return;
+    pthread_mutex_lock(&p->mutex);
+    slAndroidSimpleBufferQueueCallback android_cb = p->android_callback;
+    slBufferQueueCallback bq_cb = p->bq_callback;
+    void *ctx = p->callback_ctx;
+    int stopped = p->thread_stop;
+    pthread_mutex_unlock(&p->mutex);
+    if (stopped) return;
+    if (android_cb) {
         if (p->callback_log_count++ < 8U) {
             l_info("OpenSL: invoking Android buffer queue callback");
         }
-        p->android_callback((SLAndroidSimpleBufferQueueItf)&p->android_bq_itf, p->callback_ctx);
-    } else if (p->bq_callback) {
+        android_cb((SLAndroidSimpleBufferQueueItf)&p->android_bq_itf, ctx);
+    } else if (bq_cb) {
         if (p->callback_log_count++ < 8U) {
             l_info("OpenSL: invoking generic buffer queue callback");
         }
-        p->bq_callback((SLBufferQueueItf)&p->bq_itf, p->callback_ctx);
+        bq_cb((SLBufferQueueItf)&p->bq_itf, ctx);
     }
 }
 
@@ -154,7 +159,7 @@ static void player_release(OpenslPlayer *p) {
 
 static void *opensl_audio_thread(void *arg) {
     SceUID self = sceKernelGetThreadId();
-    int rc = sceKernelChangeThreadCpuAffinityMask(self, 0x00040000);
+    int rc = sceKernelChangeThreadCpuAffinityMask(self, 0x00070000);
     int priority_rc = sceKernelChangeThreadPriority(self, 80);
     telemetry_log("CPU", "audio mask=0x%05x rc=0x%08x priority80_rc=0x%08x",
                   sceKernelGetThreadCpuAffinityMask(self), (unsigned)rc, (unsigned)priority_rc);
@@ -311,8 +316,10 @@ static SLresult player_android_bq_register_callback(SLAndroidSimpleBufferQueueIt
                                                     void *context) {
     (void)self;
     if (g_player) {
+        pthread_mutex_lock(&g_player->mutex);
         g_player->android_callback = callback;
         g_player->callback_ctx = context;
+        pthread_mutex_unlock(&g_player->mutex);
         l_info("OpenSL Android buffer queue callback registered @%p", (void *)callback);
     }
     return SL_RESULT_SUCCESS;
@@ -349,8 +356,10 @@ static SLresult player_bq_register_callback(SLBufferQueueItf self,
                   (unsigned)(uintptr_t)context);
     (void)self;
     if (g_player) {
+        pthread_mutex_lock(&g_player->mutex);
         g_player->bq_callback = callback;
         g_player->callback_ctx = context;
+        pthread_mutex_unlock(&g_player->mutex);
         l_info("OpenSL buffer queue callback registered @%p", (void *)callback);
     }
     return SL_RESULT_SUCCESS;
@@ -371,15 +380,18 @@ static SLresult player_play_set_state(SLPlayItf self, SLuint32 state) {
 
     atomic_store(&p->play_state, state);
     if (state == SL_PLAYSTATE_PLAYING) {
-        p->playing = 1;
+        pthread_mutex_lock(&p->mutex);
         if (!p->port_open) {
             if (audio_open_port(p->sample_rate, p->channels, 1024) < 0) {
                 p->playing = 0;
                 atomic_store(&p->play_state, SL_PLAYSTATE_STOPPED);
+                pthread_mutex_unlock(&p->mutex);
                 return SL_RESULT_RESOURCE_ERROR;
             }
             p->port_open = 1;
         }
+        p->playing = 1;
+        pthread_mutex_unlock(&p->mutex);
         if (opensl_start_thread(p) < 0) {
             p->playing = 0;
             atomic_store(&p->play_state, SL_PLAYSTATE_STOPPED);
@@ -388,12 +400,19 @@ static SLresult player_play_set_state(SLPlayItf self, SLuint32 state) {
     } else if (state == SL_PLAYSTATE_PAUSED) {
         p->playing = 0;
     } else {
+        pthread_mutex_lock(&p->mutex);
         p->playing = 0;
-        opensl_stop_thread(p);
+        /* STOP is a playback state change, not object destruction. Joining
+         * here deadlocks when FMOD holds a lock needed by the callback. Wait
+         * only for borrowed PCM output, then park the persistent consumer.
+         * Destroy still joins before freeing the player/callback interface. */
+        while (p->busy && !(p->thread_started && pthread_equal(pthread_self(), p->thread)))
+            pthread_cond_wait(&p->changed, &p->mutex);
         if (p->port_open) {
             audio_close_port();
             p->port_open = 0;
         }
+        pthread_mutex_unlock(&p->mutex);
     }
     return SL_RESULT_SUCCESS;
 }

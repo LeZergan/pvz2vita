@@ -344,7 +344,15 @@ static jboolean UIProcessEvents(jmethodID id, va_list args) {
     if (!address || capacity < 16)
         return JNI_FALSE;
     unsigned delivered = input_drain_to_buffer(address, (size_t)capacity);
-    if (delivered) l_info("[INPUT] UI_ProcessEvents delivered=%u", delivered);
+    /* Pointer motion can deliver every frame. Do not synchronously write the
+     * memory card every frame for ordinary input; touch totals remain in PERF. */
+#ifdef PVZ2_VERBOSE_RUNTIME_INFO
+    static unsigned reports;
+    if (delivered && reports < 24) {
+        ++reports;
+        l_info("[INPUT] UI_ProcessEvents delivered=%u", delivered);
+    }
+#endif
     return delivered ? JNI_TRUE : JNI_FALSE;
 }
 

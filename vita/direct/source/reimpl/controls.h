@@ -58,6 +58,9 @@ typedef struct {
 } ButtonMapping;
 
 void controls_init();
+void controls_restore_sampling(void);
+int controls_handler_pad(uint32_t b, unsigned lx, unsigned ly, unsigned rx, unsigned ry);
+void controls_handler_reset(void);
 void controls_release_for_dialog(void);
 void controls_poll();
 void controls_tick(uint64_t now_us);

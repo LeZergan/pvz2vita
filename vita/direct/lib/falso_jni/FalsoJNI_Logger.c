@@ -17,6 +17,7 @@
 #include "FalsoJNI_Logger.h"
 #include "FalsoJNI.h"
 #include "utils/bounded_log.h"
+#include "utils/telemetry.h"
 
 #include <psp2/io/fcntl.h>
 #include <psp2/kernel/clib.h>
@@ -61,6 +62,7 @@ static void _fjni_log_write_file(const char *line) {
 }
 
 #define LOG_LOCK \
+    if (!pvz2_logging_enabled) return; \
     pthread_once(&_fjni_log_once, _fjni_log_init_mutex); \
     if (!_fjni_log_mutex_inited) return; \
     sceKernelLockLwMutex(&_fjni_log_mutex, 1, NULL);

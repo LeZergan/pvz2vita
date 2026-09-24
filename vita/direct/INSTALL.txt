@@ -1,113 +1,70 @@
-Plants vs Zombies 2 for PS Vita - 1.1 RC12 texture upload and allocation fixes
-Build: 452-v1.1-rc12 | Game: 4.5.2 ROW (version 147)
+Plants vs Zombies 2 for PS Vita - v1 release preparation
+Build: 452-v1.1-rc25 | Game: 4.5.2 ROW (version 147)
 
-ALREADY INSTALLED?
-Install pvz2-vita-latest.vpk over the previous version. That's all.
-Keep your existing data and saves. No file renaming is required.
+UPDATE
+Install pvz2-vita-latest.vpk over the previous version.
+Keep your existing game data and userdata/ saves.
 
-FIRST INSTALL - TWO STEPS
-1. Copy libPVZ2.so and game.obb into ux0:data/pvz2/.
-2. Install pvz2-vita-latest.vpk using VitaShell, then launch the game.
-
-The final folder contains just these two supplied game files:
-  ux0:data/pvz2/libPVZ2.so
-  ux0:data/pvz2/game.obb
-
-The game creates userdata/ itself; leave that folder alone on updates.
-No APK, extra data folders, config files or save files need copying.
-Do not put a second pvz2 folder inside the first one.
+FIRST INSTALL
+1. Copy your matching libPVZ2.so and game.obb into ux0:data/pvz2/.
+2. Install pvz2-vita-latest.vpk using VitaShell and launch.
 The older main.147.com.ea.game.pvz2_row.obb filename is also supported.
+Do not put a second pvz2 folder inside the first one.
+The game creates userdata/ automatically. Back it up to preserve progress.
+Updates do not require copying or renaming game data again.
 
-VITA REQUIREMENTS
+REQUIREMENTS
 A homebrew-enabled Vita with kubridge.skprx enabled under *KERNEL
 in ur0:tai/config.txt. Reboot after installing the plugin.
-Install the shader compiler using ShaRKBR33D. Its file goes at:
+Install the shader compiler using ShaRKBR33D. Its file belongs at:
   ur0:data/libshacccg.suprx
   or ur0:data/external/libshacccg.suprx
-System plugins are not included in this pack.
+System plugins and commercial game data are not included.
 
-PLAYING AND SAVING
-Use the touchscreen. Tap text fields to open the Vita keyboard.
-Confirm replaces the field; confirming an empty value clears it.
-Cancel keeps the old value. The game's character rules still apply.
-Circle goes back; Start opens the menu; Square deletes text.
-The game creates userdata/ inside ux0:data/pvz2/ automatically.
-All saves, settings, logs and caches live there. Back up userdata/
-to keep your progress. Older saves are moved there on first launch;
-existing conflicting copies are preserved and reported on screen.
+CONTROLS
+Left stick / D-pad: pointer. Right stick: precise pointer.
+Cross: press; hold to drag. Circle: back. Start: game menu / pause.
+L/R: focus the standard seed tray and remember the last slot.
+Cross selects and returns to the lawn; Circle cancels tray focus.
+Use the pointer or touch for special layouts, shovel and plant food.
+Hold L+R, then Down+Cross to open the controls guide.
+Pause with Start before opening the guide during a level.
+Touch takes over from buttons. The pointer stays visible until touch or a system dialog takes over.
+Tap text fields to open the Vita keyboard; Cancel keeps the old value.
 
-IF SOMETHING GOES WRONG
-Boot checks identify missing plugins, wrong/incomplete game files and
-unwritable save folders, with instructions on screen. Fix the reported
-problem and relaunch. The port never resets your saves to fix setup.
-For infinite flower loading, leave the app there for 60 seconds, then keep
-ux0:data/pvz2/userdata/loader.log and stall.log before launching again.
-The observer captures worker samples while the flower animates as well as hard freezes.
-Snapshots are mirrored to loader.log when its writer is available.
-Each log is capped at 2 MiB plus one previous copy. If Vita generated a
-psp2core-...-eboot.bin.psp2dmp, keep that matching core dump as well.
+PERFORMANCE
+The game has a fixed 30 FPS target. There is no frame-rate selection.
+Legacy frame-rate preferences and vsync overrides are ignored.
+Presentation uses vblank and sleeping deadlines, without busy waiting.
+Main thread and helpers share cores 0-2; no single-core pinning.
+Texture conversions use a shared work queue across the caller and two helpers.
+CPU uses 500 MHz if accepted by the system, otherwise 444 MHz.
+Idle reduction stops at 444 MHz; heavy frames restore the accepted ceiling.
+No clock plugin is installed or modified by this VPK.
+Normal play disables diagnostic file writes, the stall observer and profiling.
 
-CHANGES IN 1.1 RC12
-Fixes mip uploads for resized textures, packed-color storage/update mismatch,
-and failed conversion/alpha-upload recovery. Render-target allocation failure
-now reports an error instead of silently changing dimensions. Failed fallback
-storage cannot return to rendering. Placeholder recovery may omit artwork;
-unrecoverable graphics allocation requires a restart.
-Six old-code regressions fail on RC11 and pass on RC12; compiled ARM pixel
-checks pass. The supplied crash dumps were duplicates of older date crashes.
-The latest reported crash is not conclusively identified. Hardware retest of
-RC12 is still required. Install only this VPK; keep existing data and saves.
+OPTIONAL LOGGING
+Setup does not create a logging directory. Logging is OFF by default.
+To collect a problem report, manually create this empty DIRECTORY after setup:
+  ux0:data/pvz2/logging/
+Then relaunch. It belongs beside libPVZ2.so, outside userdata/.
+A file named logging is not enough.
+Logs are written to ux0:data/pvz2/userdata/:
+  loader.log, runtime.log, jni.log, stall.log (when applicable)
+Each log is bounded to 2 MiB plus one previous copy.
+Preserve the logs before relaunching. Include a matching psp2core dump if generated.
+For a freeze, allow 30 seconds for the observer to capture it before closing.
+Remove the logging directory and relaunch to disable diagnostics again.
+Old logs remain untouched when logging is disabled.
+On-screen setup/error messages still work.
 
-RETAINED FROM 1.1 RC11
-Reuses matching shader pairs already compiled during the current session to
-avoid compiling them again. Moves periodic loader.log writes off the game
-thread so slow storage cannot hold up a frame report. Keeps the RC10 texture
-worker fix. Install this VPK over your current version; keep all game data.
-The latest RC10 log reaches 15,300 frames without a stall report, but shows
-shader hitches around 0.6 seconds and separate busy-gameplay FPS drops.
-RC11 targets the shader and logging hitches. First-time shader compilation
-still occurs; hardware FPS improvement has not yet been measured.
-
-RETAINED FROM 1.1 RC10
-The RC9 hardware log identified the render thread stuck waiting for texture
-workers that had returned to waiting for another job. RC10 replaces that
-condition-variable handoff with per-worker kernel notifications and an atomic
-completion counter. It keeps parallel texture conversion. Lost notifications
-no longer prevent completion, and a buffer is returned only after all workers
-finish writing. Hardware confirmation of the fix is still required.
-
-EARLIER CHANGES IN 1.1 RC8
-Removes a repeated kernel thread-ID lookup and table scan from each monitored
-wait. Retains worker snapshots, wait arguments, errors and timeout behavior.
-Compiled ARM checks confirm less diagnostic work. Controlled emulator title
-timing did not establish a gameplay or Vita FPS improvement.
-
-RETAINED FROM 1.1 RC7
-Fixes reproduced Unicode truncation and incorrect character/byte lengths in
-the Java string bridge. String reads now use complete immutable buffers,
-avoiding repeated conversion. Fixes cleanup when reference tracking cannot
-allocate memory. These fixes pass host and compiled ARM regressions.
-
-RETAINED FROM 1.1 RC6
-Fixes a reproduced race where concurrent configuration reads could see an
-incomplete store during startup. Serializes reads, writes and erases, and
-reports configuration write failures to the game. Keeps the existing file
-format, missing/empty value behavior and offline flag handling.
-The reported endless flower has not yet been reproduced in Vita3K. These
-configuration fixes are not proof that every loading problem is resolved.
-
-RETAINED FROM 1.1 RC5
-Fixes a reproduced audio Clear/callback lock cycle while preserving the wait
-for in-flight PCM output and the destruction join. Retains earlier time,
-storage, import, worker-stack, condition teardown and program cleanup fixes.
-Adds native semaphore/mutex/GPU/file-read wait evidence to worker snapshots.
-The supplied RC4 endless-loading report has no blocked-call snapshot. This
-build has passed isolated regressions; fixing every load is NOT yet verified.
-
-AFTER UPDATING
-1. Boot and load your existing profile. Open the level selector and play a level.
-2. Leave a menu idle, resume touch, and try suspending/resuming the Vita.
-3. Finish a level, close/reopen the game and verify your progress.
-4. Keep userdata/loader.log and stall.log. The build line must say 452-v1.1-rc10.
-Preserve logs before another launch if something fails; include any new dump.
-Back up userdata/ before testing. Existing game data does not need recopying.
+BUILD STATUS
+RC25 includes host and compiled ARM regression checks.
+Large game allocations that fail in the fixed heap can use a bounded 16 MiB
+fallback, preserving at least 8 MiB reported free USER memory at allocation.
+This targets the supplied allocation-failure dumps, not every possible crash.
+Faster archive CRC checks retain cache-corruption detection and existing formats.
+It retains the tested pointer behavior and previous audio/asset/texture fixes.
+No console or Vita3K testing was performed for this build.
+The fixed 30 FPS target is not a guarantee against heavy-wave slowdowns.
+Package version remains 01.01 for compatibility with existing test installations.

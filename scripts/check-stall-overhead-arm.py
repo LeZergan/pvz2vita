@@ -15,6 +15,7 @@ with a.loader_elf.open('rb') as f:
     for seg in e.iter_segments():
         if seg['p_type']=='PT_LOAD':u.mem_write(seg['p_vaddr'],seg.data())
     symbols={s.name:(s['st_value'],s['st_size']) for s in e.get_section_by_name('.symtab').iter_symbols()}
+u.mem_write(symbols['pvz2_logging_enabled'][0],struct.pack('<I',1))
 slots,slot_bytes=symbols['slots'];assert slot_bytes==40*28
 STOP=0x8301f000
 hooks={symbols[n][0]&~1:n for n in ['sceKernelGetThreadId','sceKernelGetThreadInfo','sceKernelWaitSema','__emutls_get_address']}
@@ -30,19 +31,21 @@ def hook(uc,at,size,ctx):
     elif name=='sceKernelWaitSema':
         assert [uc.reg_read(r) for r in [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2]]==[77,1,0]
         state=words(slots+at_slot*28,7)
-        assert state[0]==123 and state[4:]==(1,77,STOP),state
+        assert state[0]==123 and state[4:]==((1,77,STOP) if enabled else (0,0,0)),state
         waits+=1;value=0x80028005
     else:raise AssertionError('Unexpected kernel/TLS call: '+name)
     uc.reg_write(UC_ARM_REG_R0,value);uc.reg_write(UC_ARM_REG_PC,uc.reg_read(UC_ARM_REG_LR))
 u.hook_add(UC_HOOK_CODE,hook)
 results=[]
-for at_slot in [0,5,15,39]:
-    u.mem_write(slots,b''.join(struct.pack('<7I',123 if i==at_slot else i+1,0,0,0,0,0,0) for i in range(40)))
-    instructions=lookups=waits=barriers=0
-    u.reg_write(UC_ARM_REG_SP,0x83018000);u.reg_write(UC_ARM_REG_LR,STOP)
-    for r,v in zip([UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2],[77,1,0]):u.reg_write(r,v)
-    u.emu_start(symbols['__wrap_sceKernelWaitSema'][0],STOP,count=10000)
-    assert u.reg_read(UC_ARM_REG_PC)==STOP and u.reg_read(UC_ARM_REG_R0)==0x80028005
-    assert words(slots+at_slot*28,7)[4]==0 and waits==1 and lookups==a.expected_lookups
-    results.append(dict(slot=at_slot,instructions=instructions,thread_id_calls=lookups,memory_barriers=barriers))
+for enabled in [0,1]:
+    u.mem_write(symbols['pvz2_logging_enabled'][0],struct.pack('<I',enabled))
+    for at_slot in [0,5,15,39]:
+        u.mem_write(slots,b''.join(struct.pack('<7I',123 if i==at_slot else i+1,0,0,0,0,0,0) for i in range(40)))
+        instructions=lookups=waits=barriers=0
+        u.reg_write(UC_ARM_REG_SP,0x83018000);u.reg_write(UC_ARM_REG_LR,STOP)
+        for r,v in zip([UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2],[77,1,0]):u.reg_write(r,v)
+        u.emu_start(symbols['__wrap_sceKernelWaitSema'][0],STOP,count=10000)
+        assert u.reg_read(UC_ARM_REG_PC)==STOP and u.reg_read(UC_ARM_REG_R0)==0x80028005
+        assert words(slots+at_slot*28,7)[4]==0 and waits==1 and lookups==(a.expected_lookups if enabled else 0)
+        results.append(dict(logging=enabled,slot=at_slot,instructions=instructions,thread_id_calls=lookups,memory_barriers=barriers))
 print(json.dumps({'elf':str(a.loader_elf),'scope':'actual compiled wrapper/observer; kernel mocked; no device timing', 'samples':results},indent=2))

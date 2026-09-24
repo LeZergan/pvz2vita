@@ -22,6 +22,16 @@
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include "utils/telemetry.h"
+#include "utils/heap_fallback.h"
+
+/* Keep malloc/new/delete/realloc in one ownership domain, including recovered
+ * kernel-backed blocks. Other loader/graphics allocations retain native libc. */
+#define malloc pvz2_heap_malloc
+#define calloc pvz2_heap_calloc
+#define realloc pvz2_heap_realloc
+#define memalign pvz2_heap_memalign
+#define valloc(size) pvz2_heap_memalign(4096, (size))
+#define free pvz2_heap_free
 
 #define MMAP_MAX_BYTES (24 * 1024 * 1024)
 #define MEMALIGN_MAX_BYTES (24 * 1024 * 1024)

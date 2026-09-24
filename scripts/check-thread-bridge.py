@@ -37,7 +37,7 @@ static int checked_destroy(pthread_mutex_t *p) {
 }
 #define pthread_mutex_destroy checked_destroy
 '''
-code += section('#define PTHR_MAX_OBJECTS', '/* Keep game/render')
+code += section('#define PTHR_MAX_OBJECTS', 'static atomic_int g_core3_mask')
 code += section('int pthread_mutex_init_soloader(', 'int pthread_join_soloader(')
 code += section('int pthread_cond_init_soloader(', 'int pthread_attr_init_soloader(')
 code += r'''

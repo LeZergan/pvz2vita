@@ -2,6 +2,7 @@
  * users which do not pass through the Android pthread bridge. No per-call
  * logging, allocation, timestamps, timeout changes or forced wakeups. */
 #include "utils/stall_watch.h"
+#include "utils/graphics_gc.h"
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/gxm.h>
@@ -67,7 +68,7 @@ static void stress_read_delay(SceSSize bytes) {
 int __real_sceKernelWaitSema(SceUID, int, SceUInt *);
 int __wrap_sceKernelWaitSema(SceUID id, int count, SceUInt *timeout) {
     OBSERVE(PVZ2_NATIVE_SEMA, id);
-    int rc = __real_sceKernelWaitSema(id, count, timeout);
+    int rc = pvz2_gc_wait(id, count, timeout);
     pvz2_stall_native_done(wait_slot);
     return rc;
 }

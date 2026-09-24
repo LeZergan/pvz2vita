@@ -6,6 +6,7 @@
  */
 
 #include "utils/logger.h"
+#include "utils/telemetry.h"
 #include "utils/utils.h"
 #include "utils/bounded_log.h"
 #include <pthread.h>
@@ -33,20 +34,6 @@ static char buffer_a[2048];
 // Buffer B is used to compile the final log using the updated format string.
 static char buffer_b[2048];
 
-/* Complete logging kill-switch: if ux0:data/pvz2/nolog.txt exists, ALL logging
- * (file + debug console) is suppressed so we can definitively rule logging out as
- * a performance factor. Checked once, lazily, under the log mutex. */
-static int _log_enabled = -1; /* -1 unchecked, 1 enabled, 0 disabled */
-static int log_enabled_locked(void) {
-    if (_log_enabled < 0) {
-        SceUID f = sceIoOpen(DATA_PATH "nolog.txt", SCE_O_RDONLY, 0);
-        if (f < 0) f = sceIoOpen(DATA_PATH "nolog.txt", SCE_O_RDONLY, 0);
-        if (f >= 0) { sceIoClose(f); _log_enabled = 0; }
-        else _log_enabled = 1;
-    }
-    return _log_enabled;
-}
-
 /* Diagnostic flush-every-line mode: if ux0:data/pvz2/logsync.txt exists, EVERY
  * log line is flushed to disk immediately (no RAM batching). Lets us see the
  * exact pre-hang/pre-crash tail when a boot hangs (which never flushes the
@@ -71,12 +58,8 @@ static void log_open_file_locked(void) {
     _log_fd = sceIoOpen(DATA_PATH "runtime.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0644);
 }
 
-/* PERF 2026-06-29: previously every l_info did a synchronous sceIoWrite to the
- * ux0 memory card from the render/sim thread. Memory-card write latency spikes
- * intermittently to tens of ms -> periodic frame dips (the gameplay stutter).
- * Batch log text into a RAM buffer and flush in bulk: one sceIoWrite per ~28KB
- * instead of per line. Important events (WARN/ERROR/FATAL) force a flush so the
- * pre-crash tail is preserved. Buffer + fd are only touched under _log_mutex. */
+/* Opt-in diagnostics batch routine lines to reduce card writes. Important
+ * messages flush immediately. Buffer and descriptor share the log mutex. */
 #define LOG_ACCUM_CAP 32768
 static char _log_accum[LOG_ACCUM_CAP];
 static size_t _log_accum_len = 0;
@@ -116,6 +99,7 @@ static void log_write_file_locked(const char *line, int force_flush) {
 }
 
 void log_reset_file(void) {
+    if (!pvz2_logging_enabled) return;
     if (_log_fd >= 0) {
         log_flush_locked();
         sceIoClose(_log_fd);
@@ -124,12 +108,6 @@ void log_reset_file(void) {
     _log_accum_len = 0;
 
     SceUID fd = sceIoOpen(DATA_PATH "runtime.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0644);
-    if (fd < 0) {
-        fd = sceIoOpen("ux0:data/loader.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0644);
-    }
-    if (fd < 0) {
-        fd = sceIoOpen("ux0:/data/loader.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0644);
-    }
     if (fd >= 0) {
         sceIoClose(fd);
     }
@@ -137,14 +115,10 @@ void log_reset_file(void) {
 }
 
 void _log_print(int t, const char* fmt, ...) {
+    if (!pvz2_logging_enabled) return;
     pthread_once(&_log_once, log_init_mutex);
     if (!atomic_load(&_log_mutex_ready)) return;
     sceKernelLockLwMutex(&_log_mutex, 1, NULL);
-
-    if (!log_enabled_locked()) {
-        sceKernelUnlockLwMutex(&_log_mutex, 1);
-        return;
-    }
 
     const char *tag = "INFO";
     switch (t) {

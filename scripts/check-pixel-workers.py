@@ -52,10 +52,11 @@ static int sceKernelWaitSema(int id,int count,unsigned *timeout) {
 static int sceKernelDelayThread(unsigned us) {usleep(us);return 0;}
 #include "utils/pixel_workers.c"
 static int create_limit, attempts;
+static atomic_int hold_start=1;
 static struct {void *(*fn)(void *); void *arg;} delayed[3];
 static void *late_start(void *arg) {
     unsigned i=(unsigned)(uintptr_t)arg;
-    usleep(30000); /* First job is published before this worker is waiting. */
+    while(atomic_load(&hold_start)) usleep(100);
     return delayed[i].fn(delayed[i].arg);
 }
 int pthread_create_soloader(pthread_t *t, const pthread_attr_t_bionic *a,
@@ -64,20 +65,45 @@ int pthread_create_soloader(pthread_t *t, const pthread_attr_t_bionic *a,
     unsigned i=(unsigned)(uintptr_t)v;delayed[i].fn=f;delayed[i].arg=v;
     return pthread_create(t, NULL, late_start, v);
 }
+#include "etc1-reference.h"
+static pthread_mutex_t reference_lock=PTHREAD_MUTEX_INITIALIZER;
 static void check(int w, int h, int mode, int zero) {
-    size_t n = (size_t)w * h * (mode == PVZ2_RGBA_HALF ? 4 : 1);
+    size_t n = mode>=PVZ2_ETC1_RGBA ? (size_t)((w+3)/4)*((h+3)/4)*8 : (size_t)w*h*(mode==PVZ2_RGBA_HALF ? 4 : 1);
     uint8_t *source = malloc(n + 16);
     assert(source);
     for (size_t i = 0; i < n + 16; ++i) source[i] = (uint8_t)(i*37 + i/113);
+    if(mode>=PVZ2_ETC1_RGBA) for(size_t i=3;i<n+3;i+=8) {
+        if((i/8)&1) {source[i+3]|=2;for(int c=0;c<3;c++)source[i+c]=(16<<3)|(source[i+c]&7);}
+        else source[i+3]&=~2;
+    }
     const uint8_t *input = zero ? NULL : source + 3; /* unaligned input */
     uint8_t *actual = pvz2_pixels_convert(input, w, h, mode);
-    int dw = mode == PVZ2_ALPHA_RGBA ? w : w/2;
-    int dh = mode == PVZ2_ALPHA_RGBA ? h : h/2;
+    int dw = (mode == PVZ2_ALPHA_RGBA || mode == PVZ2_ETC1_RGBA) ? w : w/2;
+    int dh = (mode == PVZ2_ALPHA_RGBA || mode == PVZ2_ETC1_RGBA) ? h : h/2;
     assert(actual);
+    size_t bytes=(size_t)dw*dh*4;
+    uint8_t *reused=malloc(bytes+16);assert(reused);memset(reused,0xad,bytes+16);
+    assert(!pvz2_pixels_convert_into(input,w,h,mode,reused,bytes-1));
+    assert(!pvz2_pixels_convert_into(input,w,h,mode,NULL,bytes));
+    assert(pvz2_pixels_convert_into(input,w,h,mode,reused,bytes));
+    assert(!memcmp(reused,actual,bytes));
+    for(unsigned i=0;i<16;i++)assert(reused[bytes+i]==0xad);
+    free(reused);
+    uint8_t *reference=NULL;
+    if(mode>=PVZ2_ETC1_RGBA) {
+        reference=malloc((size_t)w*h*4);assert(reference);
+        pthread_mutex_lock(&reference_lock);
+        memcpy(reference,reference_decode(input,w,h),(size_t)w*h*4);
+        pthread_mutex_unlock(&reference_lock);
+    }
     for (int y=0; y<dh; ++y) for (int x=0; x<dw; ++x) {
         for (int ch=0; ch<4; ++ch) {
             unsigned expected = 255;
-            if (mode == PVZ2_RGBA_HALF) {
+            if (mode >= PVZ2_ETC1_RGBA) {
+                size_t i=((size_t)y*(mode==PVZ2_ETC1_HALF?2:1)*w+x*(mode==PVZ2_ETC1_HALF?2:1))*4+ch;
+                expected=mode==PVZ2_ETC1_RGBA ? reference[i] :
+                    (reference[i]+reference[i+4]+reference[i+w*4]+reference[i+w*4+4])/4;
+            } else if (mode == PVZ2_RGBA_HALF) {
                 size_t i=((size_t)y*2*w+x*2)*4+ch;
                 expected=(input[i]+input[i+4]+input[i+w*4]+input[i+w*4+4])/4;
             } else if(ch == 3) {
@@ -92,10 +118,19 @@ static void check(int w, int h, int mode, int zero) {
             assert(actual[((size_t)y*dw+x)*4+ch] == expected);
         }
     }
-    free(actual); free(source); /* pool must retain neither pointer */
+    free(reference); free(actual); free(source); /* pool must retain neither pointer */
 }
 static void *caller(void *arg) {
     for(int i=0;i<8;++i) check(517,515,(int)(uintptr_t)arg,0);
+    return NULL;
+}
+static void *release_delayed_helpers(void *arg) {
+    /* No helper may start until the caller has claimed every strip, including
+     * the final out-of-range claim. Unlike fixed slices, no rows are stranded.
+     * Do not inspect pixels here: their publication is the completion barrier. */
+    while(!atomic_load(&generation) || atomic_load(&next_row)<=1024) usleep(100);
+    assert(atomic_load(&pending)==worker_count);
+    atomic_store(&hold_start,0);
     return NULL;
 }
 int main(int argc, char **argv) {
@@ -108,38 +143,46 @@ int main(int argc, char **argv) {
         expected=create_fail_at ? create_fail_at-1 : 0;
     assert(worker_count == expected);
     pvz2_pixels_init(3); /* no duplicate pool */
+    pthread_t release;
+    if(worker_count) assert(!pthread_create(&release,NULL,release_delayed_helpers,NULL));
+    check(1024,1024,PVZ2_ALPHA_RGBA,0);
+    if(worker_count) {
+        assert(!pthread_join(release,NULL));
+        puts("PASS: caller drains every strip with all helpers delayed; completion still waits for helper acknowledgment");
+    } else atomic_store(&hold_start,0);
     assert(!pvz2_pixels_convert(NULL,2,2,PVZ2_RGBA_HALF));
     assert(!pvz2_pixels_convert(NULL,1,1024,PVZ2_ALPHA_HALF));
     assert(!pvz2_pixels_convert(NULL,-1,1,PVZ2_ALPHA_RGBA));
     assert(!pvz2_pixels_convert(NULL,1,1,9));
-    for(int m=0;m<3;++m) {
+    for(int m=0;m<5;++m) {
         check(2,2,m,0); check(7,9,m,0); check(1025,513,m,0);
-        if(m) { check(5,3,m,1); check(1024,1024,m,1); }
+        if(m==1 || m==2) { check(5,3,m,1); check(1024,1024,m,1); }
     }
     check(1024,1,PVZ2_ALPHA_RGBA,0);
-    pthread_t callers[3];
-    for(int i=0;i<3;++i) assert(!pthread_create(&callers[i],NULL,caller,(void *)(uintptr_t)i));
-    for(int i=0;i<3;++i) assert(!pthread_join(callers[i],NULL));
+    check(1,1,PVZ2_ETC1_RGBA,0);
+    pthread_t callers[5];
+    for(int i=0;i<5;++i) assert(!pthread_create(&callers[i],NULL,caller,(void *)(uintptr_t)i));
+    for(int i=0;i<5;++i) assert(!pthread_join(callers[i],NULL));
     /* A saturated/stale or lost notification must never own completion.
      * Suppress EVERY start and done notification, including repeated jobs.
      * Polling must still complete all rows before the buffer is freed/reused. */
     atomic_store(&drop_notifications,1);
-    for(int i=0;i<4;++i) check(1024,1024,i%3,0);
+    for(int i=0;i<4;++i) check(1024,1024,i%5,0);
     atomic_store(&drop_notifications,0);
-    for(int i=0;i<40;++i) check(517,515,i%3,0);
+    for(int i=0;i<40;++i) check(517,515,i%5,0);
     assert(jobs>30);
     if(worker_count) assert(parallel_jobs && worker_pixels && caller_pixels);
     else assert(!parallel_jobs && !worker_pixels);
     char stats[200]; pvz2_pixels_format_stats(stats,sizeof(stats)); puts(stats);
     assert(!jobs && !parallel_jobs && !worker_pixels && !caller_pixels);
-    puts("PASS: byte-exact RGBA and fused alpha conversion, odd/unaligned/null inputs, concurrent callers, completed buffer lifetime and partial/no-worker fallback");
+    puts("PASS: RGBA/alpha and fused ETC1 match independent serial reference; odd/unaligned/partial blocks, output capacity/guards, concurrent callers and buffer lifetime");
     puts("PASS: all start/done notifications dropped, stale/coalesced tokens, repeated jobs and semaphore allocation failure fallback");
 }
 '''
 (work / 'check.c').write_text(c, encoding='utf-8')
 exe = work / 'check.exe'
 subprocess.run(['gcc','-std=gnu11','-O2','-static','-pthread','-DPVZ2_PIXEL_HOST_TEST',
-                '-I'+str(src),str(work/'check.c'),'-o',str(exe)], check=True, timeout=30)
+                '-I'+str(src),'-I'+str(root/'scripts/fixtures'),str(work/'check.c'),'-o',str(exe)], check=True, timeout=30)
 results=[]
 for workers,fail in [(0,-1),(1,-1),(2,-1),(3,-1),(3,0),(3,1),(3,2),(3,3)]:
     run=subprocess.run([str(exe),str(workers),str(fail)],check=True,capture_output=True,text=True,timeout=8)

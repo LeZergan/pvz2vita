@@ -11,11 +11,11 @@
 
 Unofficial PS Vita loader for the Android 4.5.2 ROW build of *Plants vs. Zombies 2*.
 
-[Download](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc12) — [Report a problem](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
+[Download](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc25) — [Report a problem](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
 
 | | |
 | :-- | :-- |
-| Loader | PvZ2 1.1 RC12 (`452-v1.1-rc12`) |
+| Loader | PvZ2 1.1 RC25 (`452-v1.1-rc25`) |
 | Supported Android set | 4.5.2 ROW, version 147, ARMv7 |
 | Data path | `ux0:data/pvz2` |
 | Licence | [MIT](LICENSE), with third-party notices |
@@ -25,17 +25,21 @@ No Android game files are included. You must supply your own matching
 
 ## Current release status
 
-**1.1 RC12 is available.** Install its VPK over the previous version and keep
+**1.1 RC25 is available.** Install its VPK over the previous version and keep
 your existing game files and saves.
 
-RC12 fixes texture mip, packed-color update and allocation-recovery defects.
-It retains the RC5–RC11 audio, configuration, JNI, loading-worker, shader reuse
-and asynchronous logging fixes. The new RC11 hardware log reaches 189600 frames
-and shows four texture allocation errors. The supplied crash dumps are copies
-of older timezone crashes; the latest reported crash is not conclusively
-identified. RC12 hardware confirmation is pending. See the
-[release notes](docs/release-notes-v1.1-rc12.md) and
-[texture regression evidence](docs/rc12-texture-failures.md).
+RC25 targets the four newly supplied allocation-failure crashes and improves
+CPU scheduling. The main thread, game workers, audio and texture helpers may
+run on any of the three application cores. Texture work uses a shared queue,
+not fixed per-core slices. The CPU requests 500 MHz when the system accepts it,
+otherwise 444 MHz; idle reduction never goes below 444 MHz.
+
+The frame target is fixed at **30 FPS**, with no 60 FPS override. This is a cap
+and pacing target, not a verified minimum in heavy waves. RC25 passes 55 local
+host/ARM checks; its heavy-wave FPS and crash recovery need physical Vita testing.
+It also includes the intervening graphics cleanup, loading, audio, pointer and
+keyboard fixes. See the [release notes](docs/release-notes-v1.1-rc25.md) and
+[crash/scheduling evidence](docs/rc25-cpu-memory.md).
 
 ## Requirements
 
@@ -82,11 +86,18 @@ Back up `userdata/` to preserve your progress.
 
 ## Sending a log
 
+Logging is **off by default**. After setup, manually create the empty directory
+`ux0:data/pvz2/logging/`, beside the game files, then relaunch. A file with that
+name is not enough. The installer does not create the directory.
+
 1. Play until the problem happens.
 2. Close the game from LiveArea if it is still running.
-3. Do not launch it again yet. `loader.log` is reset at the start of each launch.
+3. Preserve the logs before launching again.
 4. Copy `ux0:data/pvz2/userdata/loader.log` off the Vita using VitaShell.
 5. Attach it to a [bug report](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml).
+
+Remove the logging directory and relaunch to disable diagnostics again.
+Existing logs are left untouched while logging is off.
 
 Send the whole file. Include `stall.log`, `runtime.log`, `jni.log` and a previous log copy if
 available. Each port log is capped at **2 MiB plus one previous copy**.
@@ -106,8 +117,11 @@ Never upload the proprietary game library, APKs, OBBs or saves containing privat
 
 ## Controls and saves
 
-Use the touchscreen to navigate and play. **Circle** goes back, **Start** opens
-the menu and **Square** deletes text. Tap a text field to open the Vita keyboard;
+Use touch, the left stick or D-pad to move the pointer; the right stick gives
+fine movement. **Cross** presses/drags, **Circle** goes back, **Start** opens
+the menu. **L/R** focus the standard seed tray. Hold **L+R**, then **Down+Cross**
+for the controls guide (pause first during a level).
+Tap a text field to open the Vita keyboard;
 confirm replaces the field, cancel keeps it. The game's character rules still apply.
 
 Saves, settings, logs and caches live in `ux0:data/pvz2/userdata/`. Older save

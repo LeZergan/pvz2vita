@@ -21,7 +21,7 @@ c=r'''
 static atomic_int cleanup_calls;
 #define pvz2_stall_thread_exit() ((void)atomic_fetch_add(&cleanup_calls,1))
 typedef int SceUID;
-static atomic_int g_core3_mask=0x60000;
+static atomic_int g_core3_mask=0x70000;
 #define WORKER_STATS_CAP 32
 static atomic_int worker_stats_ids[WORKER_STATS_CAP];
 static atomic_uintptr_t worker_stats_handles[WORKER_STATS_CAP];
@@ -60,27 +60,26 @@ static void *job(void *arg) {
 static void *exit_job(void *arg) { pthread_exit(arg); return NULL; }
 int main(void) {
     allowed_mask=0x70000; pvz2_init_thread_affinity();
-    assert(pvz2_cpu_core_count()==3 && actual_mask==0x10000);
+    assert(pvz2_cpu_core_count()==3 && actual_mask==0x70000);
     allowed_mask=0xf0000; pvz2_init_thread_affinity();
-    assert(pvz2_cpu_core_count()==4 && actual_mask==0x10000);
+    assert(pvz2_cpu_core_count()==3 && actual_mask==0x70000);
     lying=1; pvz2_init_thread_affinity();
     assert(pvz2_cpu_core_count()==3); lying=0;
-    allowed_mask=0x60000;
+    allowed_mask=0x70000;
     assert(pvz2_cpu_core_count()==3);
-    atomic_store(&g_core3_mask,0xe0000); assert(pvz2_cpu_core_count()==4);
-    assert(!worker_apply_affinity(1) && actual_mask==0x60000); /* Locked core 3. */
+    assert(!worker_apply_affinity(1) && actual_mask==0x70000);
     allowed_mask=0x20000; actual_mask=0x10000;
-    assert(!worker_apply_affinity(1) && actual_mask==0x20000);
+    assert(worker_apply_affinity(1)<0 && actual_mask==0x10000);
     allowed_mask=0x40000; actual_mask=0x10000;
-    assert(!worker_apply_affinity(1) && actual_mask==0x40000);
-    allowed_mask=0xe0000; assert(!worker_apply_affinity(1) && actual_mask==0xe0000);
+    assert(worker_apply_affinity(1)<0 && actual_mask==0x10000);
+    allowed_mask=0x70000;
     lying=1; actual_mask=0x10000; assert(worker_apply_affinity(1)<0); lying=0;
     allowed_mask=0; assert(worker_apply_affinity(1)<0);
-    allowed_mask=0x60000; atomic_store(&g_core3_mask,0x60000);
+    allowed_mask=0x70000;
     pthread_t threads[2]; void *result;
     for(int i=0;i<2;++i) assert(!pthread_create_soloader(&threads[i],NULL,job,malloc(8)));
     for(int i=0;i<2;++i) { assert(!pthread_join(threads[i],&result)); assert(result==(void *)42); }
-    assert(atomic_load(&executed)==2 && atomic_load(&observed)==0x60000);
+    assert(atomic_load(&executed)==2 && atomic_load(&observed)==0x70000);
     assert(atomic_load(&cleanup_calls)==2);
     /* This Windows winpthreads build does not run cleanup handlers on explicit
      * pthread_exit. Linux CI exercises that contract; Vita's compiled pte_throw
@@ -106,7 +105,7 @@ int main(void) {
     size_t unchanged;
     assert(!pthread_attr_getstacksize(attr.real_ptr,&unchanged) && unchanged==512*1024);
     pthread_attr_destroy(attr.real_ptr);free(attr.real_ptr);
-    puts("PASS: normal/unlocked core counts; verified mask and core-3/single-core fallbacks; failed affinity detection; actual host worker launch through affinity wrapper; OOM never bypasses wrapper");
+    puts("PASS: main/workers share cores 0-2; no core-3 probe or pinning fallback; rejected/lying kernel detected; real threaded launch, cleanup, stack preservation and OOM");
 }
 '''
 (work/'check.c').write_text(c,encoding='utf-8')

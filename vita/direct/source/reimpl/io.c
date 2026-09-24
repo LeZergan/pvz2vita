@@ -284,6 +284,7 @@ static const char *ensure_android_virtual_file(const char *path) {
 #include "reimpl/bits/_struct_converters.c"
 
 #define ASSET_VFD_BASE 0x40000000
+#include <pthread.h>
 #define ASSET_VFD_MAX 512
 #define ASSET_VFD_RAW_CACHE_SOFT_MAX 16u
 #define ASSET_VFD_RAW_CACHE_RETRY_TARGET 8u
@@ -296,24 +297,21 @@ typedef struct AssetVfd {
     int raw_fd;   /* cached real fd: opened once, reused via pread (HUGE: avoids
                    * an open()+close() per read, which was the 20-min-load killer) */
     unsigned int busy;
+    int reading; /* shared-offset read/lseek serialization */
+    unsigned generation;
     unsigned int last_used;
 } AssetVfd;
 
 static AssetVfd g_asset_vfds[ASSET_VFD_MAX];
-static atomic_flag g_asset_vfd_lock = ATOMIC_FLAG_INIT;
+static pthread_mutex_t g_asset_vfd_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_asset_vfd_idle = PTHREAD_COND_INITIALIZER;
 static unsigned int g_asset_vfd_open_count = 0;
 static unsigned int g_asset_vfd_live_raw = 0;
 static unsigned int g_asset_vfd_clock = 0;
 static unsigned int g_asset_vfd_trim_log_count = 0;
 
-static void asset_vfd_lock(void) {
-    while (atomic_flag_test_and_set_explicit(&g_asset_vfd_lock, memory_order_acquire)) {
-    }
-}
-
-static void asset_vfd_unlock(void) {
-    atomic_flag_clear_explicit(&g_asset_vfd_lock, memory_order_release);
-}
+static void asset_vfd_lock(void) { pthread_mutex_lock(&g_asset_vfd_lock); }
+static void asset_vfd_unlock(void) { pthread_mutex_unlock(&g_asset_vfd_lock); }
 
 static int asset_vfd_slot(int fd) {
     if (fd < ASSET_VFD_BASE) {
@@ -381,7 +379,7 @@ static int asset_vfd_snapshot(int fd, char *path, size_t path_size, off_t *pos, 
     }
 
     asset_vfd_lock();
-    if (!g_asset_vfds[slot].used) {
+    if (g_asset_vfds[slot].used != 1) {
         asset_vfd_unlock();
         errno = EBADF;
         return -1;
@@ -427,35 +425,35 @@ int asset_vfd_open(const char *path, off_t length) {
         return -1;
     }
 
-    g_asset_vfds[slot].used = 1;
-    g_asset_vfds[slot].pos = 0;
-    g_asset_vfds[slot].length = length >= 0 ? length : 0;
-    sceClibSnprintf(g_asset_vfds[slot].path, sizeof(g_asset_vfds[slot].path), "%s", path);
-    /* Open the real file ONCE here and keep it; reads use pread on this cached fd
-     * instead of open()+close() per read (that was making loads take ~20 min). */
-    g_asset_vfds[slot].raw_fd = open(path, O_RDONLY);
-    g_asset_vfds[slot].busy = 0;
-    g_asset_vfds[slot].last_used = ++g_asset_vfd_clock;
-    int raw_fd = g_asset_vfds[slot].raw_fd;
-    if (raw_fd >= 0) {
-        g_asset_vfd_live_raw += 1;
-    }
-    int fd = ASSET_VFD_BASE + slot;
-    unsigned int open_count = ++g_asset_vfd_open_count;
+    /* Reserve a slot, but do not publish a descriptor until open succeeds.
+     * Storage latency must not hold up reads/closes of unrelated assets. */
+    AssetVfd *v = &g_asset_vfds[slot];
+    v->used = 3;
+    ++v->generation;
+    v->pos = 0; v->length = length >= 0 ? length : 0;
+    v->raw_fd = -1; v->busy = 0; v->reading = 0;
+    sceClibSnprintf(v->path, sizeof(v->path), "%s", path);
     asset_vfd_unlock();
 
-    if (raw_fd < 0) {
-        int err = errno;
-        l_warn("[ASSETVFD] raw open failed fd=%d errno=%d path=%s", fd, err, path);
+    int raw_fd = open(path, O_RDONLY);
+    if (raw_fd < 0 && (errno == EMFILE || errno == ENFILE)) {
         asset_vfd_trim_cached_fds(ASSET_VFD_RAW_CACHE_RETRY_TARGET);
-        errno = err;
-    } else {
-        asset_vfd_trim_cached_fds(ASSET_VFD_RAW_CACHE_SOFT_MAX);
+        raw_fd = open(path, O_RDONLY);
     }
-
-    l_info("[ASSETVFD] open #%u fd=%d len=%lld path=%s",
-           open_count, fd, (long long)length, path);
-    return fd;
+    int saved_errno = errno;
+    asset_vfd_lock();
+    if (raw_fd < 0) {
+        v->used = 0; v->path[0] = '\0'; v->length = 0;
+        asset_vfd_unlock(); errno = saved_errno;
+        return -1;
+    }
+    v->raw_fd = raw_fd; v->used = 1;
+    v->last_used = ++g_asset_vfd_clock;
+    ++g_asset_vfd_live_raw;
+    ++g_asset_vfd_open_count;
+    asset_vfd_unlock();
+    asset_vfd_trim_cached_fds(ASSET_VFD_RAW_CACHE_SOFT_MAX);
+    return ASSET_VFD_BASE + slot;
 }
 
 int asset_vfd_is(int fd) {
@@ -465,7 +463,7 @@ int asset_vfd_is(int fd) {
     }
 
     asset_vfd_lock();
-    int used = g_asset_vfds[slot].used;
+    int used = g_asset_vfds[slot].used == 1;
     asset_vfd_unlock();
     return used;
 }
@@ -476,134 +474,79 @@ static ssize_t pread_full(int fd, void *buf, size_t count, off_t offset) {
     ssize_t r = 0;
     while (total < count) {
         r = pread(fd, (char *)buf + total, count - total, offset + (off_t)total);
+        if (r < 0 && errno == EINTR) continue;
         if (r <= 0) break;
         total += (size_t)r;
     }
     return (total > 0) ? (ssize_t)total : r;
 }
 
-ssize_t asset_vfd_read(int fd, void *buf, size_t count) {
+/* Pin the slot and real descriptor in one critical section. Close cannot
+ * recycle either while a read is in flight, including a temporary-FD read.
+ * Only shared-position operations wait for one another; pread remains parallel. */
+static ssize_t asset_vfd_read_at(int fd, void *buf, size_t count, off_t offset, int positioned) {
+    int slot = asset_vfd_slot(fd);
+    if (slot < 0) { errno = EBADF; return -1; }
+    if (positioned && offset < 0) { errno = EINVAL; return -1; }
+    if (count && !buf) { errno = EFAULT; return -1; }
     char path[PATH_MAX];
-    off_t pos = 0;
-    off_t length = 0;
-    int slot = asset_vfd_snapshot(fd, path, sizeof(path), &pos, &length);
-    if (slot < 0) {
-        return -1;
-    }
-    if (count == 0) {
-        return 0;
-    }
-    if (pos >= length) {
-        return 0;
-    }
-    if ((off_t)count > length - pos) {
-        count = (size_t)(length - pos);
-    }
-
     asset_vfd_lock();
-    int raw_fd = -1;
-    if (g_asset_vfds[slot].used && g_asset_vfds[slot].raw_fd >= 0) {
-        raw_fd = g_asset_vfds[slot].raw_fd;
-        g_asset_vfds[slot].busy += 1;
-        g_asset_vfds[slot].last_used = ++g_asset_vfd_clock;
-    }
+    AssetVfd *v = &g_asset_vfds[slot];
+    unsigned generation = v->generation;
+    while (v->used == 1 && v->generation == generation && !positioned && v->reading)
+        pthread_cond_wait(&g_asset_vfd_idle, &g_asset_vfd_lock);
+    if (v->used != 1 || v->generation != generation) { asset_vfd_unlock(); errno = EBADF; return -1; }
+    if (!positioned) offset = v->pos;
+    if (!count || offset >= v->length) { asset_vfd_unlock(); return 0; }
+    if (count > (size_t)(v->length - offset)) count = (size_t)(v->length - offset);
+    /* Vita's signed read result is 32-bit; newlib does not define SSIZE_MAX. */
+    if (count > (size_t)INT_MAX) count = (size_t)INT_MAX;
+    int raw_fd = v->raw_fd;
+    if (raw_fd < 0) sceClibSnprintf(path, sizeof(path), "%s", v->path);
+    ++v->busy;
+    if (!positioned) v->reading = 1;
+    v->last_used = ++g_asset_vfd_clock;
     asset_vfd_unlock();
 
-    ssize_t ret;
-    if (raw_fd >= 0) {
-        ret = pread_full(raw_fd, buf, count, pos);   /* cached fd: no open/close/seek */
-    } else {
-        int tmp = open(path, O_RDONLY);
-        if (tmp < 0) {
-            l_warn("[ASSETVFD] read fd=%d open failed path=%s errno=%d", fd, path, errno);
-            return -1;
-        }
-        ret = (lseek(tmp, pos, SEEK_SET) >= 0) ? pread_full(tmp, buf, count, pos) : -1;
-        int e = errno; close(tmp); errno = e;
-    }
-
-    if (ret > 0 || raw_fd >= 0) {
-        int saved_errno = errno;
-        asset_vfd_lock();
-        if (g_asset_vfds[slot].used) {
-            if (ret > 0) {
-                g_asset_vfds[slot].pos = pos + ret;
+    int temporary = raw_fd < 0;
+    if (temporary) {
+        /* An evicted asset can become hot again. Re-admit its descriptor once
+         * instead of reopening it for every small streaming read. The slot is
+         * pinned above, and adoption shares the same trim/close lock. */
+        asset_vfd_trim_cached_fds(ASSET_VFD_RAW_CACHE_SOFT_MAX - 1u);
+        raw_fd = open(path, O_RDONLY);
+        if (raw_fd >= 0) {
+            asset_vfd_lock();
+            if (v->used == 1 && v->raw_fd < 0 &&
+                g_asset_vfd_live_raw < ASSET_VFD_RAW_CACHE_SOFT_MAX) {
+                v->raw_fd = raw_fd;
+                ++g_asset_vfd_live_raw;
+                temporary = 0;
             }
-            if (raw_fd >= 0 && g_asset_vfds[slot].busy > 0) {
-                g_asset_vfds[slot].busy -= 1;
-            }
+            asset_vfd_unlock();
         }
-        asset_vfd_unlock();
-        errno = saved_errno;
     }
+    ssize_t ret = raw_fd >= 0 ? pread_full(raw_fd, buf, count, offset) : -1;
+    int saved_errno = errno;
+    if (temporary && raw_fd >= 0) close(raw_fd);
 
-    static unsigned int log_count = 0;
-    if (log_count++ < 64 || ret < 0) {
-        l_info("[ASSETVFD] read fd=%d off=%lld count=%u -> %d",
-               fd, (long long)pos, (unsigned)count, (int)ret);
+    asset_vfd_lock();
+    if (!positioned) {
+        if (ret > 0) v->pos = offset + ret;
+        v->reading = 0;
     }
+    --v->busy;
+    pthread_cond_broadcast(&g_asset_vfd_idle);
+    asset_vfd_unlock();
+    errno = saved_errno;
     return ret;
 }
 
+ssize_t asset_vfd_read(int fd, void *buf, size_t count) {
+    return asset_vfd_read_at(fd, buf, count, 0, 0);
+}
 ssize_t asset_vfd_pread(int fd, void *buf, size_t count, off_t offset) {
-    char path[PATH_MAX];
-    off_t length = 0;
-    if (offset < 0) {
-        errno = EINVAL;
-        return -1;
-    }
-    if (asset_vfd_snapshot(fd, path, sizeof(path), NULL, &length) < 0) {
-        return -1;
-    }
-    if (count == 0) {
-        return 0;
-    }
-    if (offset >= length) {
-        return 0;
-    }
-    if ((off_t)count > length - offset) {
-        count = (size_t)(length - offset);
-    }
-
-    int slot2 = asset_vfd_slot(fd);
-    asset_vfd_lock();
-    int raw_fd = -1;
-    if (slot2 >= 0 && g_asset_vfds[slot2].used && g_asset_vfds[slot2].raw_fd >= 0) {
-        raw_fd = g_asset_vfds[slot2].raw_fd;
-        g_asset_vfds[slot2].busy += 1;
-        g_asset_vfds[slot2].last_used = ++g_asset_vfd_clock;
-    }
-    asset_vfd_unlock();
-
-    ssize_t ret;
-    if (raw_fd >= 0) {
-        ret = pread_full(raw_fd, buf, count, offset);   /* cached fd: no open/close/seek */
-    } else {
-        int tmp = open(path, O_RDONLY);
-        if (tmp < 0) {
-            l_warn("[ASSETVFD] pread fd=%d open failed path=%s errno=%d", fd, path, errno);
-            return -1;
-        }
-        ret = (lseek(tmp, offset, SEEK_SET) >= 0) ? pread_full(tmp, buf, count, offset) : -1;
-        int e = errno; close(tmp); errno = e;
-    }
-
-    if (raw_fd >= 0) {
-        int saved_errno = errno;
-        asset_vfd_lock();
-        if (slot2 >= 0 && g_asset_vfds[slot2].used && g_asset_vfds[slot2].busy > 0) {
-            g_asset_vfds[slot2].busy -= 1;
-        }
-        asset_vfd_unlock();
-        errno = saved_errno;
-    }
-
-    static unsigned int log_count = 0;
-    if (log_count++ < 64 || ret < 0) {
-        l_info("[ASSETVFD] pread fd=%d off=%lld count=%u -> %d",
-               fd, (long long)offset, (unsigned)count, (int)ret);
-    }
-    return ret;
+    return asset_vfd_read_at(fd, buf, count, offset, 1);
 }
 
 off_t asset_vfd_lseek(int fd, off_t offset, int whence) {
@@ -614,7 +557,10 @@ off_t asset_vfd_lseek(int fd, off_t offset, int whence) {
     }
 
     asset_vfd_lock();
-    if (!g_asset_vfds[slot].used) {
+    unsigned generation = g_asset_vfds[slot].generation;
+    while (g_asset_vfds[slot].used == 1 && g_asset_vfds[slot].generation == generation && g_asset_vfds[slot].reading)
+        pthread_cond_wait(&g_asset_vfd_idle, &g_asset_vfd_lock);
+    if (g_asset_vfds[slot].used != 1 || g_asset_vfds[slot].generation != generation) {
         asset_vfd_unlock();
         errno = EBADF;
         return -1;
@@ -633,8 +579,8 @@ off_t asset_vfd_lseek(int fd, off_t offset, int whence) {
         return -1;
     }
 
-    off_t new_pos = base + offset;
-    if (new_pos < 0) {
+    off_t new_pos;
+    if (__builtin_add_overflow(base, offset, &new_pos) || new_pos < 0) {
         asset_vfd_unlock();
         errno = EINVAL;
         return -1;
@@ -680,11 +626,15 @@ int asset_vfd_close(int fd) {
 
     char path[PATH_MAX];
     asset_vfd_lock();
-    if (!g_asset_vfds[slot].used) {
+    if (g_asset_vfds[slot].used != 1) {
         asset_vfd_unlock();
         errno = EBADF;
         return -1;
     }
+    g_asset_vfds[slot].used = 2;
+    pthread_cond_broadcast(&g_asset_vfd_idle);
+    while (g_asset_vfds[slot].busy)
+        pthread_cond_wait(&g_asset_vfd_idle, &g_asset_vfd_lock);
     sceClibSnprintf(path, sizeof(path), "%s", g_asset_vfds[slot].path);
     int raw_fd = g_asset_vfds[slot].raw_fd;
     g_asset_vfds[slot].raw_fd = -1;

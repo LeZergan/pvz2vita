@@ -16,6 +16,7 @@ with a.loader_elf.open('rb') as f:
     for seg in elf.iter_segments():
         if seg['p_type'] == 'PT_LOAD': u.mem_write(seg['p_vaddr'], seg.data())
     syms = {s.name: s['st_value'] for s in elf.get_section_by_name('.symtab').iter_symbols()}
+u.mem_write(syms['pvz2_logging_enabled'],struct.pack('<I',1))
 STOP, SP = 0x8301f000, 0x83018000
 names = ['pthread_cond_wait', 'pthread_cond_timedwait', 'pthread_cond_signal', 'pthread_cond_broadcast']
 hooks = {syms[n] & ~1: n for n in names + ['sceKernelGetThreadId', 'sceKernelGetThreadInfo', '__emutls_get_address']}

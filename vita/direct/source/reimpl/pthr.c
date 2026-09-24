@@ -194,10 +194,9 @@ PTHR_INLINE int _cond_t_static_init(pthread_cond_t_bionic * cond, const pthread_
     return ret;
 }
 
-/* Keep game/render on user core 0 and schedule native workers on cores 1-2.
- * An already-installed core-3 unlock may widen workers; failure falls back.
- * Resolve once on main before constructors can create concurrent workers. */
-static atomic_int g_core3_mask = ATOMIC_VAR_INIT(0x00060000);
+/* Main, native workers and helpers share all three application cores.
+ * The kernel chooses placement; no dedicated core or fourth-core probe. */
+static atomic_int g_core3_mask = ATOMIC_VAR_INIT(0x00070000);
 #define WORKER_STATS_CAP 32
 static atomic_int worker_stats_ids[WORKER_STATS_CAP];
 static atomic_uintptr_t worker_stats_handles[WORKER_STATS_CAP];
@@ -223,8 +222,7 @@ void pvz2_threads_format_stats(char *out, size_t size) {
         }
         ++active;
         masks |= info.currentCpuAffinityMask;
-        if (!(info.currentCpuAffinityMask & atomic_load(&g_core3_mask)) ||
-            (info.currentCpuAffinityMask & 0x10000)) ++misplaced;
+        if (info.currentCpuAffinityMask != atomic_load(&g_core3_mask)) ++misplaced;
         if ((unsigned)info.lastExecutedCpuId < 4) cores |= 1u << info.lastExecutedCpuId;
         if (previous_ids[i] == tid && info.runClocks >= previous_ticks[i]) {
             workers_delta += info.runClocks - previous_ticks[i];
@@ -238,35 +236,23 @@ void pvz2_threads_format_stats(char *out, size_t size) {
 }
 void pvz2_init_thread_affinity(void) {
     SceUID self = sceKernelGetThreadId();
-    int workers = 0x00060000;
-    /* Probe an already-unlocked fourth core; ordinary hardware rejects this.
-     * Verify actual affinity before advertising the extra worker core. */
-    if (sceKernelChangeThreadCpuAffinityMask(self, 0x000E0000) >= 0 &&
-        sceKernelGetThreadCpuAffinityMask(self) == 0x000E0000)
-        workers = 0x000E0000;
-    atomic_store(&g_core3_mask, workers);
-    int rc = sceKernelChangeThreadCpuAffinityMask(self, 0x00010000);
+    const int workers = 0x00070000;
+    int rc = sceKernelChangeThreadCpuAffinityMask(self, workers);
     telemetry_log("CPU", "main mask=0x%05x rc=0x%08x; workers mask=0x%05x",
                   sceKernelGetThreadCpuAffinityMask(self), (unsigned)rc, workers);
 }
 int pvz2_cpu_core_count(void) {
-    return (atomic_load(&g_core3_mask) & 0x80000) ? 4 : 3;
+    return 3;
 }
 
 typedef struct { void *(*start)(void *); void *param; } mcsm_thr_wrap;
 static int worker_apply_affinity(SceUID self) {
     int wanted = atomic_load(&g_core3_mask);
     int rc = sceKernelChangeThreadCpuAffinityMask(self, wanted);
-    /* Verify actual state as well as the return code. If a widened mask fails,
-     * keep trying ordinary worker cores before accepting inherited core 0. */
+    /* pthread implementations can create core-restricted threads independently
+     * of the caller. Widen once at entry and verify the kernel accepted it. */
     int actual = sceKernelGetThreadCpuAffinityMask(self);
     if (rc >= 0 && actual == wanted) return 0;
-    const int fallback[] = {0x60000, 0x20000, 0x40000};
-    for (unsigned i = 0; i < sizeof(fallback)/sizeof(fallback[0]); ++i) {
-        rc = sceKernelChangeThreadCpuAffinityMask(self, fallback[i]);
-        actual = sceKernelGetThreadCpuAffinityMask(self);
-        if (rc >= 0 && actual == fallback[i]) return 0;
-    }
     return rc < 0 ? rc : -1;
 }
 static void pvz2_worker_cleanup(void *arg) {

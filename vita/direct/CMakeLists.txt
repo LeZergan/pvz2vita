@@ -23,7 +23,7 @@ include("${VITASDK}/share/vita.cmake" REQUIRED)
 # Vita application configuration
 set(VITA_APP_NAME "Plants vs Zombies 2")
 set(VITA_TITLEID  "PVZ2VITA1")
-set(VITA_VPKNAME  "pvz2-vita-452-60fps")
+set(VITA_VPKNAME  "pvz2-vita-452")
 set(VITA_VERSION  "01.01")
 # ATTRIBUTE2=12 grants the extended memory budget the game needs.
 set(VITA_MKSFOEX_FLAGS "-d ATTRIBUTE2=12")
@@ -85,6 +85,9 @@ endif()
 
 add_executable(${CMAKE_PROJECT_NAME}
                source/main_452.c
+               source/utils/controller.c
+               source/utils/graphics_alloc.c
+               source/utils/heap_fallback.c
                source/utils/input_replay.c
                source/dynlib.c
                source/dynlib_pvz2_gap.c
@@ -121,6 +124,7 @@ add_executable(${CMAKE_PROJECT_NAME}
                source/utils/telemetry.c
                source/utils/stall_watch.c
                source/utils/native_waits.c
+               source/utils/graphics_gc.c
                source/utils/utils.c
                lib/falso_jni/FalsoJNI.c
                lib/falso_jni/FalsoJNI_ImplBridge.c
@@ -147,11 +151,12 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
                         ${CMAKE_SOURCE_DIR}/lib/pvr/stubs_gen)
 
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,--wrap=pthread_cond_destroy)
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,--wrap=gpu_alloc_mapped_aligned)
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
     -Wl,--wrap=pthread_cond_wait -Wl,--wrap=pthread_cond_timedwait
     -Wl,--wrap=pthread_cond_signal -Wl,--wrap=pthread_cond_broadcast)
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
-    -Wl,--wrap=sceKernelWaitSema -Wl,--wrap=sceKernelLockMutex
+    -Wl,--wrap=sceKernelWaitSema -Wl,--wrap=sceKernelSignalSema -Wl,--wrap=sceKernelDelayThread -Wl,--wrap=sceKernelLockMutex
     -Wl,--wrap=sceGxmFinish -Wl,--wrap=sceIoRead -Wl,--wrap=sceIoPread)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}

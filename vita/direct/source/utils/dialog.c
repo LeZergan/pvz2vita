@@ -131,7 +131,14 @@ void fatal_error(const char *fmt, ...) {
     extern void *g_pvr_egl_surface;
 #endif
 
-    init_msg_dialog(string);
+    int dialog_rc = init_msg_dialog(string);
+    if (dialog_rc < 0) {
+        /* A failed dialog never reaches FINISHED. Waiting for it used to loop
+         * forever, including when graphics-memory recovery reports an error. */
+        telemetry_log("FATAL", "error dialog unavailable rc=0x%x", (unsigned)dialog_rc);
+        sceKernelExitProcess(1);
+        for (;;);
+    }
 
     while (!get_msg_dialog_result())
 #ifdef USE_PVR_PSP2

@@ -46,7 +46,9 @@ static int sceTouchPeek(int p,SceTouchData *t,int n) {*t=sample;return read_rc;}
 static int sceCtrlPeekBufferPositiveExt2(int p,SceCtrlData *t,int n) {*t=pad_sample;return pad_rc;}
 static int sceTouchGetSamplingState(int p,int *s) {*s=sampling;return 0;}
 static int sceTouchSetSamplingState(int p,int s) {sampling=s;++restart_calls;return 0;}
-static void sceCtrlSetSamplingModeExt(int s) {}
+static int base_mode,ext_mode;
+static void sceCtrlSetSamplingMode(int s) {base_mode=s;}
+static void sceCtrlSetSamplingModeExt(int s) {ext_mode=s;}
 static void sceMotionStartSampling(void) {}
 static void sceKernelPowerTick(int s) {++power_ticks;}
 #define sceClibMemcpy memcpy
@@ -66,6 +68,9 @@ static uint32_t u32(unsigned n) {uint32_t v;memcpy(&v,wire+n,4);return v;}
 static unsigned drain(void) {return input_drain_to_buffer(wire,sizeof(wire));}
 int main(void) {
  controls_init();
+ assert(base_mode==SCE_CTRL_MODE_ANALOG_WIDE && ext_mode==SCE_CTRL_MODE_ANALOG_WIDE);
+ base_mode=ext_mode=0;controls_restore_sampling();
+ assert(base_mode==SCE_CTRL_MODE_ANALOG_WIDE && ext_mode==SCE_CTRL_MODE_ANALOG_WIDE);
  sample.reportNum=2;sample.report[0]=(SceTouchReport){.id=3,.x=100,.y=200};
  sample.report[1]=(SceTouchReport){.id=7,.x=300,.y=400};controls_poll();assert(drain()==2);
  uint32_t a=u32(20),b=u32(68);assert(a && b && a!=b);
@@ -101,6 +106,12 @@ int main(void) {
  pvz2_input_push_touch(1,PVZ2_INPUT_TOUCH_UP,1,1);pvz2_input_push_touch(2,PVZ2_INPUT_TOUCH_UP,2,2);assert(drain()==2);
  assert(u32(20)==UINT32_MAX && u32(68)==1);
  pvz2_input_push_touch(-1,0,0,0);pvz2_input_push_touch(256,0,0,0);assert(!drain());
+ sample.reportNum=1;sample.report[0].id=22;read_rc=1;controls_poll();assert(drain()==1);
+ read_rc=0;for(int i=0;i<7;i++){controls_poll();assert(!drain());}
+ controls_poll();assert(drain()==1 && u32(52)==PVZ2_INPUT_TOUCH_UP && !touch_old.reportNum);
+ controls_poll();assert(!drain());
+ read_rc=1;controls_poll();assert(drain()==1 && u32(52)==PVZ2_INPUT_TOUCH_DOWN);
+ sample.reportNum=0;controls_poll();assert(drain()==1 && u32(52)==PVZ2_INPUT_TOUCH_UP);
  puts("PASS: overlapping contacts retain separate matching IDs; replacement releases first; no-sample/error recovery; IME release barrier; 20s idle/restart/new tap; malformed samples; ID reuse/wrap");
 }
 '''

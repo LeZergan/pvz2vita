@@ -98,13 +98,18 @@ static void analog_suppress_center_noise(float *x, float *y) {
     }
 }
 
-void controls_init() {
-    // Enable analog sticks and touchscreen
+/* System dialogs can change controller sampling independently of button input.
+ * Restore both modes after termination, before reading the next game sample. */
+void controls_restore_sampling(void) {
+    sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG_WIDE);
     sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG_WIDE);
+}
+
+void controls_init() {
+    controls_restore_sampling();
     sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);
 
-    // Enable accelerometer
-    sceMotionStartSampling();
+    /* No motion input is consumed by this port. Leave its sensor off. */
 }
 
 void poll_touch();
@@ -144,9 +149,16 @@ void controls_format_stats(char *out, unsigned capacity) {
 }
 
 void poll_touch() {
+    static unsigned missing_samples;
     memset(&touch, 0, sizeof(touch));
     int rc = sceTouchPeek(SCE_TOUCH_PORT_FRONT, &touch, 1);
     if (rc <= 0 || touch.reportNum > SCE_TOUCH_MAX_REPORT) {
+        /* A missing sample is not a finger-up, but persistent loss must not
+         * leave controller ownership blocked by a stale physical capture. */
+        if (rc == 0 && ++missing_samples >= 8) {
+            release_touches();
+            missing_samples = 8;
+        }
         if (rc < 0 || touch.reportNum > SCE_TOUCH_MAX_REPORT) {
             ++touch_read_errors;
             touch_last_error = rc < 0 ? rc : -1;
@@ -154,6 +166,7 @@ void poll_touch() {
         }
         return; /* Never replay an old sample when the system returned none. */
     }
+    missing_samples = 0;
 
     /* End old captures before introducing replacement contacts in this sample. */
     for (int i = 0; i < touch_old.reportNum; i++) {
@@ -222,6 +235,7 @@ static ButtonMapping mapping[] = {
 };
 
 uint32_t old_buttons = 0, current_buttons = 0, pressed_buttons = 0, released_buttons = 0;
+static int pad_owned;
 
 float analog_lx[3] = { 0 };
 float analog_ly[3] = { 0 };
@@ -230,13 +244,20 @@ float analog_ry[3] = { 0 };
 
 void poll_pad() {
     SceCtrlData pad = {0};
-    if (sceCtrlPeekBufferPositiveExt2(0, &pad, 1) <= 0) return;
+    int rc = sceCtrlPeekBufferPositiveExt2(0, &pad, 1);
+    if (rc <= 0) {
+        if (rc < 0) controls_handler_reset();
+        return;
+    }
 
     // Gamepad buttons
     old_buttons = current_buttons;
     current_buttons = pad.buttons;
     pressed_buttons = current_buttons & ~old_buttons;
     released_buttons = ~current_buttons & old_buttons;
+
+    pad_owned = controls_handler_pad(pad.buttons, pad.lx, pad.ly, pad.rx, pad.ry);
+    if (pad_owned) return;
 
     for (int i = 0; i < sizeof(mapping) / sizeof(ButtonMapping); i++) {
         if (pressed_buttons & mapping[i].sce_button) {
@@ -302,13 +323,21 @@ void poll_stick(ControlsStickId which, float raw_x, float raw_y, float * reading
  * or confirmation key against the newly focused text field. */
 void controls_release_for_dialog(void) {
     release_touches();
+    controls_handler_reset();
     for (unsigned i = 0; i < sizeof(mapping)/sizeof(mapping[0]); ++i)
-        if (current_buttons & mapping[i].sce_button)
+        if (!pad_owned && (current_buttons & mapping[i].sce_button))
             controls_handler_key(mapping[i].android_button, CONTROLS_ACTION_UP);
     memset(&touch_old, 0, sizeof(touch_old));
     old_buttons = current_buttons = 0;
+    pad_owned = 0;
     dialog_release_barrier = 1;
 }
+
+/* Other loader targets/host fixtures keep their existing key mapping. */
+__attribute__((weak)) int controls_handler_pad(uint32_t b, unsigned lx, unsigned ly, unsigned rx, unsigned ry) {
+    (void)b; (void)lx; (void)ly; (void)rx; (void)ry; return 0;
+}
+__attribute__((weak)) void controls_handler_reset(void) {}
 static int controls_dialog_barrier(void) {
     if (!dialog_release_barrier) return 0;
     SceTouchData t = {0}; SceCtrlData p = {0};
@@ -318,6 +347,11 @@ static int controls_dialog_barrier(void) {
     uint32_t buttons = 0;
     for (unsigned i = 0; i < sizeof(mapping)/sizeof(mapping[0]); ++i)
         buttons |= mapping[i].sce_button;
-    if (!t.reportNum && !(p.buttons & buttons)) dialog_release_barrier = 0;
+    if (!t.reportNum) {
+        /* Keep a held IME-confirm button out of the game, but allow pointer
+         * movement immediately. The barrier consumes the release sample. */
+        controls_handler_pad(0, p.lx, p.ly, p.rx, p.ry);
+        if (!(p.buttons & buttons)) dialog_release_barrier = 0;
+    }
     return 1;
 }

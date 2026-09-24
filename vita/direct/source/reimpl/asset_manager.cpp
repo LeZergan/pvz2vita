@@ -14,6 +14,9 @@
 #include <string>
 #include <fcntl.h>
 #include <cerrno>
+#include <climits>
+#include <cstdint>
+#include <new>
 
 typedef struct assetManager {
     int dummy = 0;
@@ -34,9 +37,22 @@ typedef struct aAssetDirState {
     char **entries;
     size_t count;
     size_t cursor;
+    size_t capacity;
 } aAssetDirState;
 
-static AAssetManager * g_AAssetManager = NULL;
+static assetManager g_asset_manager = {0, PTHREAD_MUTEX_INITIALIZER};
+
+#ifdef USE_SCELIBC_IO
+#define asset_seek sceLibcBridge_fseek
+#define asset_tell sceLibcBridge_ftell
+#define asset_read sceLibcBridge_fread
+#define asset_close sceLibcBridge_fclose
+#else
+#define asset_seek fseek
+#define asset_tell ftell
+#define asset_read fread
+#define asset_close fclose
+#endif
 
 static FILE *asset_fopen(const char *path) {
 #ifdef USE_SCELIBC_IO
@@ -53,15 +69,19 @@ static FILE *asset_fopen_with_retry(const char *path) {
     }
 
     int first_errno = errno;
+    /* Missing optional assets are normal. Do not evict useful descriptors for
+     * ENOENT (or retry permission/media failures) on every fallback lookup. */
+    if (first_errno != EMFILE && first_errno != ENFILE) return NULL;
     asset_vfd_trim_cached_fds(8u);
     f = asset_fopen(path);
 
     static unsigned int s_fail_log = 0;
+    unsigned log_index = __atomic_fetch_add(&s_fail_log, 1u, __ATOMIC_RELAXED);
     if (f) {
-        if (s_fail_log++ < 24u) {
+        if (log_index < 24u) {
             l_info("AAssetManager_open retry succeeded after VFD trim: %s", path);
         }
-    } else if (s_fail_log++ < 24u) {
+    } else if (log_index < 24u) {
         l_warn("AAssetManager_open failed: %s errno=%d", path, first_errno);
     }
     return f;
@@ -82,9 +102,14 @@ static int asset_dir_entry_cmp(const void *a, const void *b) {
 }
 
 static bool asset_dir_push_entry(aAssetDirState *dir, const char *name) {
-    char **new_entries = (char **)realloc(dir->entries, (dir->count + 1) * sizeof(char *));
-    if (!new_entries) return false;
-    dir->entries = new_entries;
+    if (dir->count == dir->capacity) {
+        if (dir->capacity > SIZE_MAX / (2 * sizeof(char *))) return false;
+        size_t capacity = dir->capacity ? dir->capacity * 2 : 16;
+        char **new_entries = (char **)realloc(dir->entries, capacity * sizeof(char *));
+        if (!new_entries) return false;
+        dir->entries = new_entries;
+        dir->capacity = capacity;
+    }
     dir->entries[dir->count] = strdup(name);
     if (!dir->entries[dir->count]) return false;
     dir->count += 1;
@@ -92,12 +117,7 @@ static bool asset_dir_push_entry(aAssetDirState *dir, const char *name) {
 }
 
 AAssetManager * AAssetManager_create() {
-    if (g_AAssetManager) return g_AAssetManager;
-    assetManager am;
-    pthread_mutex_init(&am.mLock, NULL);
-    g_AAssetManager = (AAssetManager *) malloc(sizeof(assetManager));
-    memcpy(g_AAssetManager, &am, sizeof(assetManager));
-    return g_AAssetManager;
+    return (AAssetManager *)&g_asset_manager;
 }
 
 AAssetManager * AAssetManager_fromJava(void *env, void *assetManager) {
@@ -109,44 +129,38 @@ AAsset* AAssetManager_open(AAssetManager* mgr, const char* filename, int mode) {
 #ifdef USE_PVR_PSP2
     if (filename && *filename) { loading_screen_set_asset(filename); loading_screen_tick(); }
 #endif
-    std::string realp = std::string(DATA_PATH) + std::string("assets/") + std::string(filename);
-    std::string fallbackp = std::string(DATA_PATH) + std::string(filename);
-
-    auto * a = new aAsset;
-    a->filename = (char *) malloc(realp.length() + 1);
-    strcpy(a->filename, realp.c_str());
-    a->bytesRead = 0;
-    a->buffer = NULL;
-    a->bufferSize = 0;
-
-    a->f = asset_fopen_with_retry((const char *)a->filename);
-
-    if (!a->f) {
-        free(a->filename);
-        a->filename = (char *) malloc(fallbackp.length() + 1);
-        strcpy(a->filename, fallbackp.c_str());
-        a->f = asset_fopen_with_retry((const char *)a->filename);
+    (void)mgr; (void)mode;
+    if (!filename || !*filename) return NULL;
+    char path[1024];
+    int n = snprintf(path, sizeof(path), "%sassets/%s", DATA_PATH, filename);
+    if (n < 0 || (size_t)n >= sizeof(path)) return NULL;
+    FILE *f = asset_fopen_with_retry(path);
+    if (!f) {
+        n = snprintf(path, sizeof(path), "%s%s", DATA_PATH, filename);
+        if (n < 0 || (size_t)n >= sizeof(path)) return NULL;
+        f = asset_fopen_with_retry(path);
     }
+    if (!f) return NULL;
+    long length = -1;
+    if (asset_seek(f, 0, SEEK_END) == 0) length = asset_tell(f);
+    if (length < 0 || asset_seek(f, 0, SEEK_SET) != 0) { asset_close(f); return NULL; }
+    auto *a = new (std::nothrow) aAsset{};
+    if (!a) { asset_close(f); return NULL; }
+    a->filename = strdup(path);
+    if (!a->filename) { asset_close(f); delete a; return NULL; }
+    a->f = f; a->fileSize = (size_t)length; a->opened = true;
+    return (AAsset *)a;
+}
 
-    if (!a->f) {
-        free(a->filename);
-        delete a;
-        a = NULL;
-    } else {
-#ifdef USE_SCELIBC_IO
-        sceLibcBridge_fseek(a->f, 0, SEEK_END);
-        a->fileSize = sceLibcBridge_ftell(a->f);
-        sceLibcBridge_fseek(a->f, 0, SEEK_SET);
-#else
-        fseek(a->f, 0, SEEK_END);
-        a->fileSize = ftell(a->f);
-        fseek(a->f, 0, SEEK_SET);
-#endif
-        a->opened = true;
-    }
-
-    l_debug("AAssetManager_open<%p>(%p, %s, %i): %p", __builtin_return_address(0), mgr, realp.c_str(), mode, a);
-    return (AAsset *) a;
+/* Descriptor handoff releases the stdio handle to conserve Vita FDs. Reopen
+ * lazily at the asset's own position; the exported descriptor is independent. */
+static bool asset_ensure_stream(aAsset *a) {
+    if (a->opened) return true;
+    FILE *f = asset_fopen_with_retry(a->filename);
+    if (!f) return false;
+    if (asset_seek(f, (long)a->bytesRead, SEEK_SET) != 0) { asset_close(f); return false; }
+    a->f = f; a->opened = true;
+    return true;
 }
 
 void AAsset_close(AAsset* asset) {
@@ -167,46 +181,48 @@ void AAsset_close(AAsset* asset) {
 }
 
 int AAsset_read(AAsset* asset, void* buf, size_t count) {
-    l_debug("AAsset_read<%p>(%p, %p, %i)", __builtin_return_address(0), asset, buf, count);
     if (!asset) return -1;
-    aAsset * a = (aAsset *) asset;
-    if (!a->opened) return -1;
-#ifdef USE_SCELIBC_IO
-    size_t ret = sceLibcBridge_fread(buf, 1, count, a->f);
-#else
-    size_t ret = fread(buf, 1, count, a->f);
-#endif
-    if (ret > 0) { a->bytesRead += ret; return (int) ret; }
-    else {
-#ifdef USE_SCELIBC_IO
-        if (sceLibcBridge_feof(a->f)) return 0; else return -1;
-#else
-        if (feof(a->f)) return 0; else return -1;
-#endif
+    if (!count) return 0;
+    if (!buf) return -1;
+    aAsset *a = (aAsset *)asset;
+    size_t remaining = a->fileSize - a->bytesRead;
+    if (count > remaining) count = remaining;
+    if (count > INT_MAX) count = INT_MAX;
+    if (!count) return 0;
+    if (a->buffer) {
+        memcpy(buf, (const char *)a->buffer + a->bytesRead, count);
+        a->bytesRead += count;
+        return (int)count;
     }
+    if (!asset_ensure_stream(a)) return -1;
+    size_t n = asset_read(buf, 1, count, a->f);
+    a->bytesRead += n;
+    /* An early EOF is truncated/corrupt asset data, not a valid asset EOF. */
+    return n ? (int)n : -1;
 }
 
 off_t AAsset_seek(AAsset* asset, off_t offset, int whence) {
-    l_debug("AAsset_seek(%p, %d, %i)", asset, offset, whence);
-    if (!asset) return (off_t)-1;
-    aAsset * a = (aAsset *) asset;
-    if (!a->opened) return -1;
-#ifdef USE_SCELIBC_IO
-    if (sceLibcBridge_fseek(a->f, offset, whence) != 0) return -1;
-    long pos = sceLibcBridge_ftell(a->f);
-#else
-    if (fseek(a->f, offset, whence) != 0) return -1;
-    long pos = ftell(a->f);
-#endif
-    if (pos < 0) return -1;
-    a->bytesRead = (size_t) pos;
-    return (off_t) pos;
+    if (!asset) return -1;
+    aAsset *a = (aAsset *)asset;
+    int64_t base;
+    switch (whence) {
+        case SEEK_SET: base = 0; break;
+        case SEEK_CUR: base = (int64_t)a->bytesRead; break;
+        case SEEK_END: base = (int64_t)a->fileSize; break;
+        default: return -1;
+    }
+    /* Check before addition, including OFF_MIN. Android assets reject seeks
+     * outside their data, unlike unrestricted stdio files. */
+    if (offset < -base || offset > (int64_t)a->fileSize - base) return -1;
+    size_t pos = (size_t)(base + offset);
+    if (!a->buffer && a->opened && asset_seek(a->f, (long)pos, SEEK_SET) != 0) return -1;
+    a->bytesRead = pos;
+    return (off_t)pos;
 }
 
 off_t AAsset_getRemainingLength(AAsset* asset) {
-    if (!asset) return (off_t)-1;
-    aAsset * a = (aAsset *) asset;
-    if (!a->opened) return -1;
+    if (!asset) return -1;
+    aAsset *a = (aAsset *)asset;
     return (off_t)(a->fileSize - a->bytesRead);
 }
 
@@ -222,8 +238,8 @@ AAssetDir* AAssetManager_openDir(AAssetManager* mgr, const char* dirName) {
     std::string fallbackDirPath = std::string(DATA_PATH);
     if (!normalizedDirName.empty()) { realDirPath += normalizedDirName + "/"; fallbackDirPath += normalizedDirName + "/"; }
 
-    auto *dir = new aAssetDirState;
-    dir->entries = NULL; dir->count = 0; dir->cursor = 0;
+    auto *dir = new (std::nothrow) aAssetDirState{};
+    if (!dir) return NULL;
 
     DIR *osDir = opendir(realDirPath.c_str());
     bool usingFallbackDir = false;
@@ -240,7 +256,7 @@ AAssetDir* AAssetManager_openDir(AAssetManager* mgr, const char* dirName) {
         std::string assetName;
         if (!normalizedDirName.empty()) assetName = normalizedDirName + "/";
         assetName += entry->d_name;
-        if (!asset_dir_push_entry(dir, assetName.c_str())) { l_error("AAssetManager_openDir: failed to append asset entry: %s", assetName.c_str()); break; }
+        if (!asset_dir_push_entry(dir, assetName.c_str())) { l_error("AAssetManager_openDir: failed to append asset entry: %s", assetName.c_str()); closedir(osDir); AAssetDir_close((AAssetDir *)dir); return NULL; }
     }
     closedir(osDir);
     if (dir->count > 1) qsort(dir->entries, dir->count, sizeof(char *), asset_dir_entry_cmp);
@@ -287,44 +303,24 @@ int AAsset_openFileDescriptor(AAsset* asset, off_t* outStart, off_t* outLength) 
 }
 
 const void * AAsset_getBuffer(AAsset* asset) {
-    static unsigned log_count = 0;
-    if (!asset) { l_warn("AAsset_getBuffer: asset is null"); return NULL; }
-
-    aAsset * a = (aAsset *) asset;
-
+    if (!asset) return NULL;
+    aAsset *a = (aAsset *)asset;
     if (a->buffer) return a->buffer;
-
-    if (!a->opened && a->filename) {
-        a->f = asset_fopen_with_retry(a->filename);
-        if (!a->f) { l_error("AAsset_getBuffer: failed to re-open %s", a->filename); return NULL; }
-        a->opened = true;
-        a->bytesRead = 0;
-    }
-
-    if (!a->opened || !a->f) { l_error("AAsset_getBuffer: asset not open and no filename to re-open"); return NULL; }
-
-    if (a->fileSize == 0) {
-        if (log_count < 4U) { l_warn("AAsset_getBuffer: asset %s has 0 size", a->filename ? a->filename : "(null)"); log_count++; }
-        return NULL;
-    }
-
+    if (!a->fileSize || !asset_ensure_stream(a)) return NULL;
     void *buf = malloc(a->fileSize);
-    if (!buf) { l_error("AAsset_getBuffer: malloc(%zu) failed for %s", a->fileSize, a->filename ? a->filename : "(null)"); return NULL; }
-
-#ifdef USE_SCELIBC_IO
-    sceLibcBridge_fseek(a->f, 0, SEEK_SET);
-    size_t nread = sceLibcBridge_fread(buf, 1, a->fileSize, a->f);
-#else
-    fseek(a->f, 0, SEEK_SET);
-    size_t nread = fread(buf, 1, a->fileSize, a->f);
-#endif
-
-    if (nread != a->fileSize) { l_error("AAsset_getBuffer: read %zu/%zu bytes for %s", nread, a->fileSize, a->filename ? a->filename : "(null)"); free(buf); return NULL; }
-
-    a->buffer = buf;
-    a->bufferSize = a->fileSize;
-    a->bytesRead = a->fileSize;
-
-    if (log_count < 8U) { l_info("AAsset_getBuffer: %s -> %p (%zu bytes)", a->filename ? a->filename : "(null)", buf, a->fileSize); log_count++; }
-    return buf;
+    if (!buf) return NULL;
+    if (asset_seek(a->f, 0, SEEK_SET) != 0) { free(buf); return NULL; }
+    size_t n = asset_read(buf, 1, a->fileSize, a->f);
+    /* Once materialized, reads/seeks use the existing buffer, with no second
+     * cache and no stdio/FD cost. Loading a buffer does not consume bytes. */
+    if (n == a->fileSize) {
+        a->buffer = buf; a->bufferSize = a->fileSize;
+        asset_close(a->f); a->f = NULL; a->opened = false;
+        return buf;
+    }
+    free(buf);
+    /* A failed load must not change the logical cursor either. A fresh stream
+     * will restore it, even when the failing stream cannot seek anymore. */
+    asset_close(a->f); a->f = NULL; a->opened = false;
+    return NULL;
 }

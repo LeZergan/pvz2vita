@@ -72,6 +72,7 @@ python3 scripts/check-config-store.py
 python3 scripts/check-jni-unicode.py
 python3 scripts/check-placement.py
 python3 scripts/check-worker-affinity.py
+python3 scripts/check-heap-fallback.py
 python3 scripts/check-pixel-workers.py
 python3 scripts/check-texture-units.py
 python3 scripts/check-time-bridge.py
@@ -119,6 +120,18 @@ fingers, play a busy wave, save and relaunch. Return `userdata/loader.log`.
 Touch statistics and `mat4_skipped` are included in the bounded frame reports.
 See [the private testing guide](private-testing.md) for the current device
 baseline and the short tester checklist.
+
+RC25's allocation recovery is checked through the exact game's `operator new`
+and the built loader with mocked memory syscalls:
+
+```sh
+python3 scripts/check-heap-fallback-arm.py --game-lib /path/to/libPVZ2.so --loader-elf build-vita-direct/pvz2_loader
+```
+
+This reproduces a failed allocation and verifies recovery/ownership for both
+dump-sized requests, not actual device memory availability. See
+[RC25 evidence](rc25-cpu-memory.md). Logging is off unless the user manually
+creates `ux0:data/pvz2/logging/` and relaunches.
 
 The intermittent transition investigation has an isolated compiled SDK check:
 

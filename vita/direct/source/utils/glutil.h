@@ -31,6 +31,7 @@ void gl_init();
 void gl_preload();
 
 void gl_swap();
+unsigned pvz2_present_budget_us(void);
 
 const GLubyte *glGetString_soloader(GLenum name);
 

@@ -49,6 +49,7 @@ static int native_slot(int create) {
 }
 
 void pvz2_stall_frame(unsigned frame, unsigned phase) {
+    if (!pvz2_logging_enabled) return;
     atomic_store_explicit(&main_phase, phase, memory_order_relaxed);
     atomic_store_explicit(&main_frame, frame, memory_order_release);
 }
@@ -56,6 +57,7 @@ static void reserve_slot(void) {
     if (own_slot < 0) own_slot = native_slot(1);
 }
 void pvz2_stall_wait(unsigned kind, uintptr_t object, uintptr_t caller) {
+    if (!pvz2_logging_enabled) return;
     reserve_slot();
     if (own_slot < 0) return;
     WaitSlot *s = &slots[own_slot];
@@ -64,6 +66,7 @@ void pvz2_stall_wait(unsigned kind, uintptr_t object, uintptr_t caller) {
     atomic_store_explicit(&s->kind, kind, memory_order_release);
 }
 int pvz2_stall_native_wait(unsigned kind, uintptr_t object, uintptr_t caller) {
+    if (!pvz2_logging_enabled) return -1;
     int at = native_slot(1);
     if (at < 0) return -1;
     WaitSlot *s = &slots[at];
@@ -79,6 +82,7 @@ void pvz2_stall_native_done(int at) {
         atomic_store_explicit(&slots[at].native_kind, PVZ2_NATIVE_NONE, memory_order_release);
 }
 int pvz2_stall_sync(unsigned kind, uintptr_t condition, uintptr_t mutex, uintptr_t caller) {
+    if (!pvz2_logging_enabled) return -1;
     int at = native_slot(1);
     if (at < 0) return -1;
     SyncSlot *s = &sync_slots[at];
@@ -93,9 +97,11 @@ void pvz2_stall_sync_done(int at) {
         atomic_store_explicit(&sync_slots[at].kind, PVZ2_SYNC_NONE, memory_order_release);
 }
 void pvz2_stall_wait_done(void) {
+    if (!pvz2_logging_enabled) return;
     if (own_slot >= 0) atomic_store(&slots[own_slot].kind, PVZ2_WAIT_NONE);
 }
 void pvz2_stall_thread_exit(void) {
+    if (!pvz2_logging_enabled) return;
     if (own_slot < 0) return;
     atomic_store(&slots[own_slot].kind, PVZ2_WAIT_NONE);
     atomic_store(&slots[own_slot].native_kind, PVZ2_NATIVE_NONE);
@@ -186,10 +192,11 @@ static int watch_main(unsigned args, void *argp) {
     return 0;
 }
 void pvz2_stall_start(void) {
+    if (!pvz2_logging_enabled) return;
     main_tid = sceKernelGetThreadId();
-    write_line("[BOOT] transition observer, 452-v1.1-rc12\n");
+    write_line("[BOOT] transition observer, 452-v1.1-rc25\n");
     telemetry_log("SYMBOLS", "stall_start=0x%x", (unsigned)(uintptr_t)&pvz2_stall_start);
-    SceUID tid = sceKernelCreateThread("pvz2_stall_watch", watch_main, 160, 16384, 0, 0x60000, NULL);
+    SceUID tid = sceKernelCreateThread("pvz2_stall_watch", watch_main, 160, 16384, 0, 0x70000, NULL);
     int rc = tid < 0 ? tid : sceKernelStartThread(tid, 0, NULL);
     if (rc < 0) {
         if (tid >= 0) sceKernelDeleteThread(tid);

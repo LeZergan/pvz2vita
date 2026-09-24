@@ -25,6 +25,9 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#ifdef __vita__
+#include <psp2/kernel/threadmgr.h>
+#endif
 
 #include "FalsoJNI_ImplBridge.h"
 #include "FalsoJNI_Logger.h"
@@ -45,6 +48,7 @@ typedef enum TrackedObjKind {
     TRACKED_OBJ_CLASS = 1,
     TRACKED_OBJ_ARRAY = 2,
     TRACKED_OBJ_STRING = 3,
+    TRACKED_OBJ_DIRECT_BUFFER = 4,
 } TrackedObjKind;
 
 typedef struct TrackedRef {
@@ -60,6 +64,25 @@ typedef struct TrackedRef {
 #define TRACKED_REF_BUCKETS 1024u
 static TrackedRef *g_tracked_refs[TRACKED_REF_BUCKETS];
 static uint32_t g_tracked_live, g_tracked_created, g_tracked_freed;
+/* Recycle short-lived tracking records under the existing reference lock.
+ * 128 entries cost 3 KiB on ARM; unusually large live sets use the heap.
+ * This does not pool Java objects or extend their lifetimes. */
+#define TRACKED_REF_POOL_SIZE 128u
+static TrackedRef g_ref_pool[TRACKED_REF_POOL_SIZE];
+static TrackedRef *g_ref_free;
+static unsigned g_ref_pool_used;
+static TrackedRef *tracked_entry_take_locked(void) {
+    if (g_ref_free) {
+        TrackedRef *e = g_ref_free; g_ref_free = e->next; return e;
+    }
+    if (g_ref_pool_used < TRACKED_REF_POOL_SIZE) return &g_ref_pool[g_ref_pool_used++];
+    return NULL;
+}
+static int tracked_entry_return_locked(TrackedRef *e) {
+    uintptr_t address = (uintptr_t)e;
+    if (address < (uintptr_t)g_ref_pool || address >= (uintptr_t)(g_ref_pool + TRACKED_REF_POOL_SIZE)) return 0;
+    e->next = g_ref_free; g_ref_free = e; return 1;
+}
 static unsigned tracked_bucket(jobject obj) {
     uintptr_t key = (uintptr_t)obj >> 3;
     key ^= key >> 11;
@@ -90,7 +113,14 @@ static InternedClass *g_interned_classes = NULL;
 static FakeJavaObject *g_fake_java_objects = NULL;
 
 static void tracked_refs_lock(void) {
+    unsigned spins = 0;
     while (atomic_flag_test_and_set_explicit(&g_tracked_refs_lock, memory_order_acquire)) {
+#ifdef __vita__
+        /* Let a preempted owner run instead of burning a core indefinitely. */
+        if (++spins == 64) { sceKernelDelayThread(50); spins = 0; }
+#else
+        (void)spins;
+#endif
     }
 }
 
@@ -208,6 +238,7 @@ static void tracked_free_object(jobject obj, TrackedObjKind kind) {
             break;
         }
         case TRACKED_OBJ_CLASS:
+        case TRACKED_OBJ_DIRECT_BUFFER:
             free(obj);
             break;
         case TRACKED_OBJ_UNKNOWN:
@@ -232,9 +263,10 @@ static jobject tracked_register_local_owned(jobject obj, TrackedObjKind kind) {
         tracked_refs_unlock();
         return obj;
     }
+    TrackedRef *entry = tracked_entry_take_locked();
     tracked_refs_unlock();
 
-    TrackedRef *entry = (TrackedRef *)malloc(sizeof(TrackedRef));
+    if (!entry) entry = (TrackedRef *)malloc(sizeof(TrackedRef));
     if (!entry) {
         fjni_logv_err("[JNI] failed to track local ref 0x%x", (int)obj);
         tracked_free_object(obj, kind);
@@ -254,8 +286,9 @@ static jobject tracked_register_local_owned(jobject obj, TrackedObjKind kind) {
         if (existing->kind == TRACKED_OBJ_UNKNOWN) {
             existing->kind = kind;
         }
+        int pooled = tracked_entry_return_locked(entry);
         tracked_refs_unlock();
-        free(entry);
+        if (!pooled) free(entry);
         return obj;
     }
 
@@ -284,6 +317,8 @@ static void tracked_add_ref_if_known(jobject obj, int as_global) {
 
 static int tracked_release_ref_if_known(jobject obj, int prefer_global) {
     TrackedRef *released = NULL;
+    jobject released_obj = NULL;
+    TrackedObjKind released_kind = TRACKED_OBJ_UNKNOWN;
     int found = 0;
 
     if (!obj || is_reserved_fake_ref(obj)) {
@@ -310,6 +345,9 @@ static int tracked_release_ref_if_known(jobject obj, int prefer_global) {
         if (entry->local_refs == 0 && entry->global_refs == 0) {
             *pp = entry->next;
             released = entry;
+            released_obj = entry->obj;
+            released_kind = entry->kind;
+            if (tracked_entry_return_locked(entry)) released = NULL;
             --g_tracked_live;
             ++g_tracked_freed;
         }
@@ -318,10 +356,10 @@ static int tracked_release_ref_if_known(jobject obj, int prefer_global) {
 
     tracked_refs_unlock();
 
-    if (released) {
-        tracked_free_object(released->obj, released->kind);
-        free(released);
-    }
+    /* Destruction may recursively release object-array members. Never hold
+     * the tracking lock while running it, or read a recycled entry here. */
+    if (released_obj) tracked_free_object(released_obj, released_kind);
+    if (released) free(released);
 
     return found;
 }
@@ -2441,34 +2479,35 @@ jboolean ExceptionCheck(JNIEnv* env) {
     return JNI_FALSE;
 }
 
-/* Direct ByteBuffers: model the ByteBuffer object as its own native address.
- * Returning NULL from NewDirectByteBuffer made the engine's C++ ByteBuffer
- * wrapper operate on a null base and query a bogus capacity. We hand back the
- * address as the jobject and recover it (and the capacity) in the accessors. A
- * small ring remembers the capacity of the most-recent buffers. */
-#define FJNI_DBB_SLOTS 256
-static struct { void *addr; jlong cap; } s_dbb[FJNI_DBB_SLOTS];
-static volatile int s_dbb_head = 0;
+/* A JNI object has its own lifetime, even when two buffers wrap the same
+ * native address. The old ring both evicted live capacities after 256 creates
+ * and returned stale sizes for reused addresses. Never own/free the payload. */
+typedef struct { void *address; jlong capacity; } JavaDirectBuffer;
 
 jobject NewDirectByteBuffer(JNIEnv* env, void* address, jlong capacity) {
-    if (!address) return NULL;
-    int i = s_dbb_head;
-    s_dbb[i].addr = address;
-    s_dbb[i].cap  = capacity;
-    s_dbb_head = (i + 1) % FJNI_DBB_SLOTS;
-    fjni_log_dbg("[JNI] NewDirectByteBuffer -> address as jobject");
-    return (jobject)address;
+    if (!address || capacity < 0) return NULL;
+    JavaDirectBuffer *buffer = malloc(sizeof(*buffer));
+    if (!buffer) return NULL;
+    buffer->address = address; buffer->capacity = capacity;
+    return tracked_register_local_owned((jobject)buffer, TRACKED_OBJ_DIRECT_BUFFER);
 }
 
 void* GetDirectBufferAddress(JNIEnv* env, jobject buf) {
-    return (void*)buf;
+    (void)env;
+    tracked_refs_lock();
+    TrackedRef *ref = tracked_find_locked(buf);
+    void *address = ref && ref->kind == TRACKED_OBJ_DIRECT_BUFFER ? ((JavaDirectBuffer *)buf)->address : NULL;
+    tracked_refs_unlock();
+    return address;
 }
 
 jlong GetDirectBufferCapacity(JNIEnv* env, jobject buf) {
-    for (int i = 0; i < FJNI_DBB_SLOTS; i++)
-        if (s_dbb[i].addr == (void*)buf)
-            return s_dbb[i].cap;
-    return 0;
+    (void)env;
+    tracked_refs_lock();
+    TrackedRef *ref = tracked_find_locked(buf);
+    jlong capacity = ref && ref->kind == TRACKED_OBJ_DIRECT_BUFFER ? ((JavaDirectBuffer *)buf)->capacity : -1;
+    tracked_refs_unlock();
+    return capacity;
 }
 
 jobjectRefType GetObjectRefType(JNIEnv* env, jobject obj) {

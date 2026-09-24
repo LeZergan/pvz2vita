@@ -18,6 +18,7 @@ c=r'''
 typedef int SceUID;
 typedef struct { unsigned size; char name[32]; unsigned status,waitType,waitId;
     unsigned long long runClocks; unsigned currentCpuAffinityMask; } SceKernelThreadInfo;
+static int pvz2_logging_enabled=1;
 static char output[32000];static unsigned used,ticks,deleted,errors,starts;
 static int tid=1,create_error,start_error,moving;static unsigned tid_queries;static jmp_buf stopped;
 static int sceKernelGetThreadId(void) { ++tid_queries; return tid; }
@@ -38,7 +39,7 @@ static int telemetry_try_line(const char *line) { ++mirrored; return 1; }
 #define sceClibSnprintf snprintf
 #define sceClibStrnlen strnlen
 static int sceKernelCreateThread(const char *n,int(*f)(unsigned,void*),int p,int s,int a,int m,void*v) {
-    assert(p==160 && s==16384 && m==0x60000);return create_error ? -1 : 2;
+    assert(p==160 && s==16384 && m==0x70000);return create_error ? -1 : 2;
 }
 static int sceKernelStartThread(int t,unsigned n,void*v) { return start_error ? -1 : 0; }
 static int sceKernelDeleteThread(int t) { ++deleted;return 0; }
@@ -64,6 +65,12 @@ static unsigned count(const char *text) {
     unsigned n=0;const char *p=output;while((p=strstr(p,text))){++n;p+=strlen(text);}return n;
 }
 int main(void) {
+    pvz2_logging_enabled=0;
+    pvz2_stall_start();pvz2_stall_frame(1,1);pvz2_stall_wait(1,1,1);
+    assert(pvz2_stall_native_wait(1,1,1)==-1 && pvz2_stall_sync(1,1,1,1)==-1);
+    pvz2_stall_wait_done();pvz2_stall_thread_exit();
+    assert(!tid_queries && !starts && !used);
+    pvz2_logging_enabled=1;
     pvz2_stall_start();assert(!errors && starts==1);
     for(tid=2;tid<100;++tid) {
         pvz2_stall_wait(PVZ2_WAIT_COND,0x1234,0x98123456);

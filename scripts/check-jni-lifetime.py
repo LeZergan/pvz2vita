@@ -2,11 +2,13 @@
 from pathlib import Path
 import subprocess
 import tempfile
+import argparse
 
 root = Path(__file__).resolve().parents[1]
 lib = root / "vita/direct/lib/falso_jni"
 work = Path(tempfile.mkdtemp(prefix="jni-lifetime-", dir=root / "out"))
-jni = (lib / "FalsoJNI.c").read_text(encoding="utf-8")
+parser=argparse.ArgumentParser();parser.add_argument('--rounds',type=int,default=1);parser.add_argument('--jni-source',type=Path,default=lib/'FalsoJNI.c');args=parser.parse_args()
+jni = args.jni_source.read_text(encoding="utf-8")
 bridge = (lib / "FalsoJNI_ImplBridge.c").read_text(encoding="utf-8")
 
 
@@ -42,7 +44,8 @@ parts = [prefix, function(bridge, "jsize getFieldTypeSize("),
          jni[jni.index("jobject NewGlobalRef("):jni.index("jint EnsureLocalCapacity(")],
          jni[jni.index("jstring NewStringUTF("):jni.index("jsize GetArrayLength(")],
          jni[jni.index("jobjectArray NewObjectArray("):jni.index("jbooleanArray NewBooleanArray(")],
-         function(jni, "jbyteArray NewByteArray(")]
+         function(jni, "jbyteArray NewByteArray("),
+         jni[jni.index('jboolean ExceptionCheck('):jni.index('jobjectRefType GetObjectRefType(')]]
 tests = r'''
 static void expect_live(unsigned expected) {
     uint32_t live,created,freed; fjni_ref_stats(&live,&created,&freed);
@@ -66,7 +69,7 @@ static int has(uint32_t *t,unsigned id) {
     for(unsigned n=0;n<8 && t[i];n++,i=(i+1)&7) if(t[i]==id)return 1;
     return 0;
 }
-int main(void) {
+void exercise(void) {
     jobject s=NewStringUTF(NULL,"context"); expect_live(1);
     NewGlobalRef(NULL,s); DeleteLocalRef(NULL,s); expect_live(1);
     jobject alias=NewLocalRef(NULL,s); DeleteGlobalRef(NULL,s); expect_live(1);
@@ -83,6 +86,26 @@ int main(void) {
     ReleaseStringUTFChars(NULL,child,copy); DeleteLocalRef(NULL,child); expect_live(0);
     puts("PASS: object-array retention, replacement, duplicate children and returned local aliases");
     DeleteLocalRef(NULL,(jobject)(uintptr_t)0x42424242); expect_live(0);
+    unsigned char payload[128]={0};
+    jobject buffers[1024];
+    for(int i=0;i<1024;i++){
+        buffers[i]=NewDirectByteBuffer(NULL,payload,(i%128)+1);
+        assert(buffers[i]);
+        if(i)assert(buffers[i]!=buffers[i-1]);
+    }
+    for(int i=0;i<1024;i++){
+        assert(GetDirectBufferAddress(NULL,buffers[i])==payload);
+        assert(GetDirectBufferCapacity(NULL,buffers[i])==(i%128)+1);
+    }
+    NewGlobalRef(NULL,buffers[0]);DeleteLocalRef(NULL,buffers[0]);
+    assert(GetDirectBufferCapacity(NULL,buffers[0])==1);
+    DeleteGlobalRef(NULL,buffers[0]);
+    for(int i=1;i<1024;i++)DeleteLocalRef(NULL,buffers[i]);
+    expect_live(0);
+    assert(!NewDirectByteBuffer(NULL,payload,-1));
+    assert(!GetDirectBufferAddress(NULL,NULL) && GetDirectBufferCapacity(NULL,NULL)==-1);
+    payload[0]=91;assert(payload[0]==91);
+    puts("PASS: 1024 live direct buffers, shared/reused native address, exact capacities and global/local lifetimes; payload never freed");
     pthread_t threads[4];
     for(int i=0;i<4;i++) assert(pthread_create(&threads[i],NULL,churn,NULL)==0);
     for(int i=0;i<4;i++) pthread_join(threads[i],NULL);
@@ -93,6 +116,10 @@ int main(void) {
     expect_live(20000);
     for(int i=19999;i>=0;i--) DeleteLocalRef(NULL,held[i]);
     expect_live(0); puts("PASS: 20000 simultaneous refs; bucket collision cleanup");
+    unsigned available=0;
+    for(TrackedRef*e=g_ref_free;e;e=e->next) assert(++available<=TRACKED_REF_POOL_SIZE);
+    assert(available==TRACKED_REF_POOL_SIZE && g_ref_pool_used==TRACKED_REF_POOL_SIZE);
+    puts("PASS: all 128 tracking slots recycled after concurrent churn, nested destruction and heap fallback");
     uint32_t t[8]={0}; put(t,7);put(t,15);put(t,23);
     texture_marks_remove(t,8,7); assert(!has(t,7)&&has(t,15)&&has(t,23));
     put(t,7); texture_marks_remove(t,8,15); assert(has(t,7)&&!has(t,15)&&has(t,23));
@@ -103,7 +130,7 @@ int main(void) {
     puts("PASS: recycled texture IDs, wrapped collision chains, full table and absent IDs");
 }
 '''
-(work / "check.c").write_text("\n".join(parts) + tests, encoding="utf-8")
+(work / "check.c").write_text("\n".join(parts) + tests + "\nint main(void){for(unsigned i=0;i<"+str(args.rounds)+"u;i++)exercise();return 0;}\n", encoding="utf-8")
 cmd = ["gcc", "-std=gnu11", "-O2", "-static", "-pthread", "-Wno-pointer-to-int-cast",
        "-I", str(lib), "-I", str(root / "vita/direct/source"), str(work / "check.c"),
        str(lib / "converter.c"), "-o", str(work / "check.exe")]
