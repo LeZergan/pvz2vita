@@ -21,6 +21,8 @@ prefix=r'''
 #include <fcntl.h>
 #include <string>
 #include <sys/types.h>
+#include <malloc.h>
+#include <unistd.h>
 #define DATA_PATH ""
 #define l_debug(...) ((void)0)
 #define l_info(...) ((void)0)
