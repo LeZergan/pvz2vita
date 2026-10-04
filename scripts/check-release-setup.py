@@ -130,6 +130,7 @@ static int plugin=1,shader=1,lib=1,obb=1,legacy=0,wrong_size=0,wrong_header=0,wr
 typedef struct {int kind;long pos;} FakeFile;
 static FakeFile files[4];
 static FakeFile *fake_open(const char *p,const char *m) {
+    assert(!strstr(p,".obb"));
     int kind=strstr(p,"libPVZ2.so")?1:strstr(p,".obb")?2:3;
     if ((kind==1&&!lib)||(kind==2&&!obb&&!legacy)||(kind==3&&write_fail)) {errno=EACCES;return NULL;}
     if(kind==3) assert(strstr(p,".pvz2-write-check.tmp"));
@@ -173,6 +174,9 @@ int main(void) {
     legacy=1; assert(pvz2_boot_check(error,sizeof(error))&&strstr(pvz2_obb_path(),"main.147"));obb=1;
     assert(pvz2_boot_check(error,sizeof(error))&&strstr(pvz2_obb_path(),"game.obb"));
     wrong_size=1;assert(!pvz2_boot_check(error,sizeof(error))&&strstr(error,"incomplete"));wrong_size=0;
+    // Modified OBB size/header/fingerprints must not participate in preflight.
+    files[2].pos=0; // No OBB fopen/fseek/fread takes place.
+
     wrong_header=1;assert(!pvz2_boot_check(error,sizeof(error))&&strstr(error,"damaged"));wrong_header=0;
     wrong_fp=1;assert(!pvz2_boot_check(error,sizeof(error)));wrong_fp=0;
     write_fail=1;assert(!pvz2_boot_check(error,sizeof(error))&&strstr(error,"Cannot write"));write_fail=0;

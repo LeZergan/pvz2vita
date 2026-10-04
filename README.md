@@ -11,11 +11,12 @@
 
 Unofficial PS Vita loader for the Android 4.5.2 ROW build of *Plants vs. Zombies 2*.
 
-[Download](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc25) — [Report a problem](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
+[Download RC29](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc29) — [Setup](#setup) — [Settings guide](docs/settings.md) — [Report a problem](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
 
 | | |
 | :-- | :-- |
-| Loader | PvZ2 1.1 RC25 (`452-v1.1-rc25`) |
+| Current release | PvZ2 1.1 RC29 (`452-v1.1-rc29`) |
+| Previous release | [1.1 RC25](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc25) |
 | Supported Android set | 4.5.2 ROW, version 147, ARMv7 |
 | Data path | `ux0:data/pvz2` |
 | Licence | [MIT](LICENSE), with third-party notices |
@@ -25,21 +26,28 @@ No Android game files are included. You must supply your own matching
 
 ## Current release status
 
-**1.1 RC25 is available.** Install its VPK over the previous version and keep
-your existing game files and saves.
+**RC29 adds boot settings, language selection, backed-up coins/gems editing,
+and support for compatible modded OBBs.** It fixes the shoulder-button boot
+chord, uses two display buffers to address settings flashing, and waits for all
+launch buttons to be released before accepting changes.
 
-RC25 targets the four newly supplied allocation-failure crashes and improves
-CPU scheduling. The main thread, game workers, audio and texture helpers may
-run on any of the three application cores. Texture work uses a shared queue,
-not fixed per-core slices. The CPU requests 500 MHz when the system accepts it,
-otherwise 444 MHz; idle reduction never goes below 444 MHz.
+Language override defaults **Off / English**. Mods that translate English assets
+use those assets automatically. There are no stock OBB size/hash checks or mod
+allowlists; the installed archive supplies its own resource names and offsets.
+All optimizations are enabled, including sprite upload suppression and improved
+shader metadata caching. There is no optimization switch in settings.
 
-The frame target is fixed at **30 FPS**, with no 60 FPS override. This is a cap
-and pacing target, not a verified minimum in heavy waves. RC25 passes 55 local
-host/ARM checks; its heavy-wave FPS and crash recovery need physical Vita testing.
-It also includes the intervening graphics cleanup, loading, audio, pointer and
-keyboard fixes. See the [release notes](docs/release-notes-v1.1-rc25.md) and
-[crash/scheduling evidence](docs/rc25-cpu-memory.md).
+The fixed **30 FPS** target, shared three-core scheduling and accepted 500 MHz
+or fallback 444 MHz clock policy are retained. Busy zombie waves can still drop
+below the target. No new hardware FPS gain is claimed.
+
+**RC29 is available, and LeZergan confirms it works on Vita.** The full local suite passes 60/60;
+the expanded checks cover 27 boot-menu scenarios and additional save/storage
+failures. That confirmation does not establish a complete playthrough or a
+measured heavy-wave FPS minimum. Known performance limits are listed below.
+See the [release notes](docs/release-notes-v1.1-rc29.md),
+[release audit](docs/rc29-release-audit.md), and
+[additional update scenarios](docs/rc29-update-scenarios.md).
 
 ## Requirements
 
@@ -51,19 +59,26 @@ Install the following on a homebrew-enabled Vita before the loader:
 | [kubridge](https://github.com/TheOfficialFloW/kubridge) | `*KERNEL` | Required; reboot after installing |
 | `libshacccg.suprx` | `ur0:data/` or `ur0:data/external/` | [ShaRKBR33D](https://github.com/Rinnegatamante/ShaRKBR33D) can install it |
 
-Use **4.5.2 ROW / version 147** game files. Other builds are not supported.
-[Check file sizes and hashes](docs/BUILDING.md#supply-the-matching-archive-locally).
+Use the **4.5.2 ROW / version 147 ARMv7 library** and an OBB compatible with that
+engine. A compatible modded OBB can replace the original archive.
+[Library requirements and mod archive support](docs/BUILDING.md#game-library-and-mod-archives).
 
 ## Setup
 
 ### 1. Install the loader
 
-Install `pvz2-vita-latest.vpk` with VitaShell.
+Download `pvz2-vita-latest.vpk` from the
+[RC29 release](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc29).
+Copy it to the Vita and install it with VitaShell. Existing users can install
+over the previous loader; keep the game files and back up `userdata/` first.
 
 ### 2. Prepare the data folder
 
-Put your `libPVZ2.so` and main OBB in a folder named `pvz2`. Rename the OBB
-to `game.obb`.
+Obtain the matching ARMv7 `libPVZ2.so` from your own Android 4.5.2 ROW APK
+(`lib/armeabi-v7a/libPVZ2.so` inside the APK). An APK can be opened as a ZIP.
+Put that library and your main OBB in a folder named `pvz2`, directly inside
+that folder. Rename the OBB to `game.obb`. A compatible mod archive uses the
+same name; keep the matching game library.
 
 ### 3. Copy the data to the Vita
 
@@ -76,13 +91,61 @@ ux0:data/pvz2/
 └── userdata/       ← created automatically
 ```
 
-Launch **Plants vs Zombies 2** from LiveArea. Do not nest a second `pvz2` folder
-inside the first. The older `main.147.com.ea.game.pvz2_row.obb` name is also accepted.
+Launch **Plants vs Zombies 2** from LiveArea. The game creates `userdata/`
+automatically; a new install needs no downloaded save or prebuilt resource index.
+The first boot indexes the installed archive and can take longer.
+
+Do not nest a second `pvz2` folder inside the first. The older
+`main.147.com.ea.game.pvz2_row.obb` filename is also accepted. If both names
+exist, **`game.obb` takes priority**. Settings show which archive was selected.
+
+### 4. Open settings when needed
+
+Hold **D-pad Down + Cross (X) + L + R** as the app starts, within the first
+1.5 seconds of boot. **Release all four buttons** when settings appear, then
+use Up/Down to select a row and Left/Right or Cross to change an option.
+
+| Setting | Behavior |
+| :-- | :-- |
+| Language override | Off by default; the game requests English |
+| Language | Available with override On: English, German, Spanish, French, Italian, Brazilian Portuguese |
+| Player | Select the profile whose coins/gems you want to edit |
+| Coins / Gems | Cross opens nine-digit entry; Cross accepts the staged value, Circle cancels that value |
+| Done | Applies pending changes and exits; relaunch to play |
+
+Outside number entry, **Circle exits and discards pending changes**. The screen
+also shows OBB filename, folder, bytes/MiB and readable RSB information.
+All optimizations are always enabled; there is no sprite optimization toggle.
+Read the [settings and save-backup guide](docs/settings.md) before editing saves.
 
 ### Updating later
 
 Install the new VPK over the old version. Keep both game files and `userdata/`.
 Back up `userdata/` to preserve your progress.
+
+RC26/RC27 language preferences reset once to **Off / English**. Deliberate choices
+saved by RC28/RC29 persist. For a mod that translates English assets, leave
+override Off. Optional alternate languages need their assets in the selected OBB.
+
+To change mods, close the game, back up your saves, and replace
+`ux0:data/pvz2/game.obb` with the intended compatible archive. Relaunch to index
+it. No stock checksum or original archive length is required. Compatibility with
+a newer Android engine version is not established by changing the OBB alone.
+
+### Setup troubleshooting
+
+- **Settings do not open:** hold the full chord while the app starts, then release
+  it once the menu appears. The [settings guide](docs/settings.md#opening-settings)
+  also documents a file-based fallback.
+- **Missing plugin/compiler:** enable kubridge under `*KERNEL` and reboot;
+  install `libshacccg.suprx` using ShaRKBR33D at a listed path above.
+- **Missing library/archive:** check the exact folder layout and file names.
+  The ARMv7 library must match 4.5.2 ROW; mod OBBs need no stock size/hash match.
+- **No editable player:** launch normally and create a player first. Unsupported
+  or damaged saves remain unchanged; language settings still work.
+- **Cannot write saves/cache:** check free space and the memory card/SD2Vita.
+  If Done reports currencies saved but settings failed, retry Done after correcting
+  storage; the currencies have already committed.
 
 ## Sending a log
 
@@ -143,7 +206,7 @@ The loader requires the softfp VitaSDK and the libraries listed in
 [the build guide](docs/BUILDING.md). A hard-float SDK is rejected.
 
 ```powershell
-.\scripts\build-vita.ps1 -SoftfpVitaSdk C:/tools/vitasdk -GameObb D:/game-files/game.obb
+.\scripts\build-vita.ps1 -Configuration Release -SoftfpVitaSdk C:/tools/vitasdk
 ```
 
 The output is `out/pvz2-vita-latest.vpk`. VPKs, extracted game data and proprietary

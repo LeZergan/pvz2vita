@@ -83,6 +83,14 @@ if(PVZ2_INPUT_REPLAY)
   add_definitions(-DPVZ2_INPUT_REPLAY=1)
 endif()
 
+# Compatibility variant requested for systems where the port-added startup
+# preflight itself is undesirable. Runtime loader/JNI/graphics failures still
+# stop normally; this only removes the extra preflight and ABI probes.
+option(PVZ2_SKIP_BOOT_CHECKS "Skip port-added startup preflight/self-checks" OFF)
+if(PVZ2_SKIP_BOOT_CHECKS)
+  add_definitions(-DPVZ2_SKIP_BOOT_CHECKS=1)
+endif()
+
 add_executable(${CMAKE_PROJECT_NAME}
                source/main_452.c
                source/utils/controller.c
@@ -121,6 +129,9 @@ add_executable(${CMAKE_PROJECT_NAME}
                source/utils/pixel_workers.c
                source/utils/logger.c
                source/utils/settings.c
+               source/utils/port_menu.c
+               source/utils/port_locale.c
+               source/utils/save_editor.cpp
                source/utils/telemetry.c
                source/utils/stall_watch.c
                source/utils/native_waits.c
@@ -209,8 +220,7 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/extras/livearea/files.cmake")
                   FILE ${PVZ2_LIVEAREA_FILES}
                   # Bionic /dev/urandom is translated to app0:/urandom by the
                   # direct loader.  PvZ2 4.5.2 constructor 944 requires it.
-                  FILE ${CMAKE_SOURCE_DIR}/extras/urandom urandom
-                  FILE ${CMAKE_SOURCE_DIR}/extras/rsb452.idx rsb452.idx)
+                  FILE ${CMAKE_SOURCE_DIR}/extras/urandom urandom)
 else()
   message(FATAL_ERROR "LiveArea package is missing. Run scripts/prepare-livearea.py before configuring the Vita target.")
 endif()

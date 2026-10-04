@@ -135,6 +135,8 @@ typedef float GLfloat;
 static int current=1,uniforms=1,comp,driver_calls;
 static unsigned pvz2_matrix_uploads_skipped;
 static float driver_value[16];
+static void sprite_uniforms_invalidate(GLuint p) {}
+static void sprite_uniforms_other(GLint location, GLsizei count) {}
 static int g_last_mat4_loc,g_last_mat4_have;static float g_last_mat4[16];
 static void glGetIntegerv(int q,int *v) {*v=current;}
 static void glGetProgramiv(unsigned p,int q,int *v) {*v=uniforms;}

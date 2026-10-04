@@ -20,6 +20,7 @@ static unsigned query_calls;
 static GLboolean program_exists=1;
 static GLboolean glIsProgram(GLuint p) { assert(p && p<=1024); ++query_calls; return program_exists; }
 static unsigned deleted,linked,pvz2_program_link_us;
+static void sprite_uniforms_invalidate(GLuint p) {}
 static int g_last_mat4_have;
 static void glDeleteProgram(GLuint p) { deleted=p; }
 static void glLinkProgram(GLuint p) { linked=p; }

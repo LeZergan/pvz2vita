@@ -85,34 +85,16 @@ static void write_index(const std::vector<uint8_t> &b) {
 }
 int main(int argc,char **argv) {
  assert(argc==3);archive=argv[1];
- assert(load_index());assert(bundled==1&&scans==0&&g_entries.size()==3710);
- if(!strcmp(argv[2],"full")) {
-  auto expected=g_entries;
-  assert(!rename("index.idx","index.backup"));assert(load_index());assert(scans==1);
-  assert(expected.size()==g_entries.size());
-  for(const auto &p:expected) {
-   const auto &a=p.second;const auto &b=g_entries.at(p.first);
-   assert(a.offset==b.offset&&a.size==b.size&&a.compressed==b.compressed&&a.block_offset==b.block_offset&&
-          a.block_size==b.block_size&&a.unpacked_size==b.unpacked_size&&a.within_block==b.within_block);
-  }
-  assert(!rename("index.backup","index.idx"));
-  FILE *f=fopen("index.idx","rb");fseek(f,0,SEEK_END);std::vector<uint8_t> original(ftell(f));rewind(f);
-  assert(fread(original.data(),1,original.size(),f)==original.size());fclose(f);
-  std::vector<uint8_t> head(256);f=fopen(archive,"rb");assert(fread(head.data(),1,256,f)==256);fclose(f);
-  const uint32_t file_size=656855040;
-  for(int test=0;test<6;test++) {
-   auto corrupt=original;
-   if(test==0)corrupt[40]^=1;
-   if(test==1)corrupt.resize(100);
-   if(test==2)corrupt[12]^=1;
-   if(test==3) {memset(corrupt.data()+64,0xff,4);uint32_t crc=mz_crc32(0,corrupt.data()+32,corrupt.size()-32);memcpy(corrupt.data()+24,&crc,4);}
-   if(test==4)memset(corrupt.data()+20,0xff,4);
-   if(test==5)corrupt.push_back(1);
-   write_index(corrupt);assert(!load_bundled_index(file_size,head));assert(g_entries.size()==3710);
-  }
-  write_index(original);assert(load_bundled_index(file_size,head));
-  puts("PASS: all 3710 bundled records equal actual OBB parser; bad checksum/truncation/binding/lengths/trailing bytes rejected");
+ assert(load_index());assert(scans==1&&g_entries.size()==3710);
+ // Shipping never consumes the old bundled index, including an adversarial one.
+ auto expected=g_entries;
+ FILE *bad=fopen("index.idx","wb");assert(bad);fputs("stale mod offsets",bad);fclose(bad);
+ assert(load_index());assert(scans==2&&g_entries.size()==expected.size());
+ for(const auto &p:expected) {
+  const auto &a=p.second;const auto &b=g_entries.at(p.first);
+  assert(a.offset==b.offset&&a.size==b.size&&a.block_offset==b.block_offset&&a.within_block==b.within_block);
  }
+ puts("PASS: actual archive directory read on each boot; stale bundled metadata cannot override mod offsets");
  g_tried=true;g_loaded=true;
  uint64_t offset;uint32_t size;
  const char *path=vita_rsb_locate("images/768/initial/effects/load_icon_front/load_icon_front.pam",&offset,&size);

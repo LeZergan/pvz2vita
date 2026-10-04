@@ -15,6 +15,7 @@
 #include "utils/frame_pacer.h"
 #include "utils/controller.h"
 #include "utils/fps_preference.h"
+#include "utils/sprite_uniforms.h"
 
 #include "reimpl/egl.h"
 #include "utils/utils.h"
@@ -53,14 +54,18 @@ static unsigned pvz2_pair_hits, pvz2_pair_misses, pvz2_pair_bypasses;
 static void shader_pairs_source_changed(GLuint shader);
 #endif
 void pvz2_gl_shader_stats(char *out, size_t size) {
-    snprintf(out, size, "binds=%u redundant_skipped=%u link_us=%u mat4_skipped=%u pair_hit=%u miss=%u bypass=%u",
+    snprintf(out, size, "binds=%u redundant_skipped=%u link_us=%u mat4_skipped=%u pair_hit=%u miss=%u bypass=%u sprite_uniform_skipped=%u",
              pvz2_program_binds, pvz2_program_binds_skipped, pvz2_program_link_us, pvz2_matrix_uploads_skipped,
-             pvz2_pair_hits, pvz2_pair_misses, pvz2_pair_bypasses);
+             pvz2_pair_hits, pvz2_pair_misses, pvz2_pair_bypasses, sprite_uniform_skipped);
+    sprite_uniform_skipped = 0;
     pvz2_program_binds = pvz2_program_binds_skipped = pvz2_program_link_us = 0;
     pvz2_matrix_uploads_skipped = 0;
     pvz2_pair_hits = pvz2_pair_misses = pvz2_pair_bypasses = 0;
 }
-void pvz2_gl_profile_begin(unsigned frame) { pvz2_profile_sample = pvz2_logging_enabled && (frame % 60) == 0; }
+void pvz2_gl_profile_begin(unsigned frame) {
+    sprite_uniforms_begin();
+    pvz2_profile_sample = pvz2_logging_enabled && (frame % 60) == 0;
+}
 void pvz2_gl_profile_stats(unsigned *draw, unsigned *upload, unsigned *uploads) {
     *draw = pvz2_profile_draw_us / 5;
     *upload = pvz2_profile_upload_us;
@@ -157,6 +162,7 @@ static mat4_program_state *g_recent_mat4_state;
  * belong to one linked executable, not to the numeric name forever. */
 static void program_caches_invalidate(GLuint program) {
     if (!program) return;
+    sprite_uniforms_invalidate(program);
     for (unsigned i = 0; i < MAT4_PROGRAM_STATE_CAP; ++i)
         if (g_mat4_program_state[i].program == program)
             memset(&g_mat4_program_state[i], 0, sizeof(g_mat4_program_state[i]));
@@ -2490,7 +2496,8 @@ void glTexParameteriv_soloader(GLenum target, GLenum pname, const GLint *params)
         glTexParameteri(target, pname, param);
         return;
     }
-    glTexParameteriv(target, pname, params);
+    /* This vitaGL declaration predates the standard const-qualified input. */
+    glTexParameteriv(target, pname, (GLint *)params);
 }
 
 void glTexParameterfv_soloader(GLenum target, GLenum pname, const GLfloat *params) {
@@ -3593,11 +3600,13 @@ static int uniform_vector_should_skip(const char *name, GLint location, GLsizei 
 
 void glUniform1f_soloader(GLint location, GLfloat v0) {
     if (uniform_scalar_should_skip("glUniform1f", location)) return;
+    sprite_uniforms_other(location, 1);
     glUniform1f(location, v0);
 }
 
 void glUniform1fv_soloader(GLint location, GLsizei count, const GLfloat *value) {
     if (uniform_vector_should_skip("glUniform1fv", location, count, value)) return;
+    sprite_uniforms_other(location, count);
     glUniform1fv(location, count, value);
 }
 
@@ -3605,6 +3614,7 @@ void glUniform1i_soloader(GLint location, GLint v0) {
     static unsigned int s_count = 0;
     s_count++;
     if (uniform_scalar_should_skip("glUniform1i", location)) return;
+    if (sprite_uniform_same(location, 1, &v0)) return;
 
 #if MCSM_FAST_FINAL_RUNTIME
     glUniform1i(location, v0);
@@ -3637,6 +3647,8 @@ void glUniform1iv_soloader(GLint location, GLsizei count, const GLint *value) {
     static unsigned int s_count = 0;
     s_count++;
     if (uniform_vector_should_skip("glUniform1iv", location, count, value)) return;
+    if (count == 1) { if (sprite_uniform_same(location, 1, value)) return; }
+    else sprite_uniforms_begin();
 
 #if MCSM_FAST_FINAL_RUNTIME
     glUniform1iv(location, count, value);
@@ -3669,46 +3681,56 @@ void glUniform1iv_soloader(GLint location, GLsizei count, const GLint *value) {
 
 void glUniform2f_soloader(GLint location, GLfloat v0, GLfloat v1) {
     if (uniform_scalar_should_skip("glUniform2f", location)) return;
+    sprite_uniforms_other(location, 1);
     glUniform2f(location, v0, v1);
 }
 
 void glUniform2fv_soloader(GLint location, GLsizei count, const GLfloat *value) {
     if (uniform_vector_should_skip("glUniform2fv", location, count, value)) return;
+    sprite_uniforms_other(location, count);
     glUniform2fv(location, count, value);
 }
 
 void glUniform2i_soloader(GLint location, GLint v0, GLint v1) {
     if (uniform_scalar_should_skip("glUniform2i", location)) return;
+    sprite_uniforms_other(location, 1);
     glUniform2i(location, v0, v1);
 }
 
 void glUniform2iv_soloader(GLint location, GLsizei count, const GLint *value) {
     if (uniform_vector_should_skip("glUniform2iv", location, count, value)) return;
+    sprite_uniforms_other(location, count);
     glUniform2iv(location, count, value);
 }
 
 void glUniform3f_soloader(GLint location, GLfloat v0, GLfloat v1, GLfloat v2) {
     if (uniform_scalar_should_skip("glUniform3f", location)) return;
+    sprite_uniforms_other(location, 1);
     glUniform3f(location, v0, v1, v2);
 }
 
 void glUniform3fv_soloader(GLint location, GLsizei count, const GLfloat *value) {
     if (uniform_vector_should_skip("glUniform3fv", location, count, value)) return;
+    sprite_uniforms_other(location, count);
     glUniform3fv(location, count, value);
 }
 
 void glUniform3i_soloader(GLint location, GLint v0, GLint v1, GLint v2) {
     if (uniform_scalar_should_skip("glUniform3i", location)) return;
+    sprite_uniforms_other(location, 1);
     glUniform3i(location, v0, v1, v2);
 }
 
 void glUniform3iv_soloader(GLint location, GLsizei count, const GLint *value) {
     if (uniform_vector_should_skip("glUniform3iv", location, count, value)) return;
+    sprite_uniforms_other(location, count);
     glUniform3iv(location, count, value);
 }
 
 void glUniform4f_soloader(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3) {
     if (uniform_scalar_should_skip("glUniform4f", location)) return;
+    GLfloat value[4] = {v0, v1, v2, v3};
+    if (sprite_uniform_same(location, 4, value)) return;
     glUniform4f(location, v0, v1, v2, v3);
 }
 
@@ -3771,6 +3793,8 @@ static void mcsm_log_anim_pose(GLint location, GLsizei count, const GLfloat *val
 
 void glUniform4fv_soloader(GLint location, GLsizei count, const GLfloat *value) {
     if (uniform_vector_should_skip("glUniform4fv", location, count, value)) return;
+    if (count == 1) { if (sprite_uniform_same(location, 4, value)) return; }
+    else sprite_uniforms_begin();
     mcsm_log_anim_pose(location, count, value);
 
 #if MCSM_FAST_FINAL_RUNTIME
@@ -3802,21 +3826,25 @@ void glUniform4fv_soloader(GLint location, GLsizei count, const GLfloat *value) 
 
 void glUniform4i_soloader(GLint location, GLint v0, GLint v1, GLint v2, GLint v3) {
     if (uniform_scalar_should_skip("glUniform4i", location)) return;
+    sprite_uniforms_other(location, 1);
     glUniform4i(location, v0, v1, v2, v3);
 }
 
 void glUniform4iv_soloader(GLint location, GLsizei count, const GLint *value) {
     if (uniform_vector_should_skip("glUniform4iv", location, count, value)) return;
+    sprite_uniforms_other(location, count);
     glUniform4iv(location, count, value);
 }
 
 void glUniformMatrix2fv_soloader(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) {
     if (uniform_vector_should_skip("glUniformMatrix2fv", location, count, value)) return;
+    sprite_uniforms_other(location, count);
     glUniformMatrix2fv(location, count, transpose, value);
 }
 
 void glUniformMatrix3fv_soloader(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value) {
     if (uniform_vector_should_skip("glUniformMatrix3fv", location, count, value)) return;
+    sprite_uniforms_other(location, count);
     glUniformMatrix3fv(location, count, transpose, value);
 }
 
@@ -3917,6 +3945,7 @@ void glUniformMatrix4fv_soloader(GLint location, GLsizei count, GLboolean transp
         g_last_mat4_loc = location;
         g_last_mat4_have = 1;
     }
+    sprite_uniforms_other(location, count);
     glUniformMatrix4fv(location, count, transpose, upload_value);
     if (cache_upload) {
         memcpy(upload_state->last_upload, upload_value, sizeof(upload_state->last_upload));

@@ -1,5 +1,5 @@
-Plants vs Zombies 2 for PS Vita - v1 release preparation
-Build: 452-v1.1-rc25 | Game: 4.5.2 ROW (version 147)
+Plants vs Zombies 2 for PS Vita - Version 1.1 RC29
+Build: 452-v1.1-rc29 | Game: 4.5.2 ROW (version 147)
 
 UPDATE
 Install pvz2-vita-latest.vpk over the previous version.
@@ -32,6 +32,36 @@ Pause with Start before opening the guide during a level.
 Touch takes over from buttons. The pointer stays visible until touch or a system dialog takes over.
 Tap text fields to open the Vita keyboard; Cancel keeps the old value.
 
+STARTUP SETTINGS / MODS
+Hold D-pad Down + Cross + L + R during the first 1.5 seconds of boot.
+Release all launch buttons when settings appear; input waits for release.
+RC29 uses double buffering to address redraw flashing and resets RC26/RC27
+language preferences once to override Off / automatic English. Later explicit
+changes persist when saved with Done.
+If the chord is difficult to time, create an empty file at:
+  ux0:data/pvz2/userdata/port_menu.txt
+Remove that file when finished; while it exists, every boot opens settings.
+Settings show the selected OBB filename, location, size and RSB information.
+Language override starts Off: automatic English, including mods translating
+English assets. Turn it On to choose English, German, Spanish, French,
+Italian or Brazilian Portuguese (when that archive contains those locales).
+Select a player and edit coins/gems. Left/Right selects a digit; Up/Down changes
+it; Cross accepts the staged value. No save is written until Done.
+Circle during number entry cancels that value and returns to the settings rows.
+Done applies pending changes and exits. Relaunch the game to use the settings.
+All edited players commit in one backed-up save transaction. Existing balances
+above 999999999 are preserved unless explicitly edited; entry uses nine digits.
+If currencies save but settings fail, the screen reports it and lets you retry.
+Circle exits and discards pending changes. Original saves are backed up as
+userdata/No_Backup/pp.dat.backup-N; restore with the game closed if needed.
+Missing or unsupported/encrypted saves remain untouched; language settings work.
+OBB size/hash checks and the stock bundled resource index are removed.
+Use game.obb compatible with the 4.5.2 engine; native library must still match.
+If both archive filenames exist, game.obb takes priority. Close the game before
+replacing a mod archive and back up userdata/ before switching mods.
+The installed archive is indexed on boot, so mod support can add startup time.
+All optimizations are enabled by default; there is no optimization toggle.
+
 PERFORMANCE
 The game has a fixed 30 FPS target. There is no frame-rate selection.
 Legacy frame-rate preferences and vsync overrides are ignored.
@@ -59,12 +89,15 @@ Old logs remain untouched when logging is disabled.
 On-screen setup/error messages still work.
 
 BUILD STATUS
-RC25 includes host and compiled ARM regression checks.
+RC29 passes 60 host and compiled ARM regression checks, with 27 menu scenarios.
+Coins/gems editing, language override, boot settings and mod indexing are checked.
+Redundant sprite sampler/color uploads are suppressed. Device FPS is unmeasured.
 Large game allocations that fail in the fixed heap can use a bounded 16 MiB
 fallback, preserving at least 8 MiB reported free USER memory at allocation.
 This targets the supplied allocation-failure dumps, not every possible crash.
 Faster archive CRC checks retain cache-corruption detection and existing formats.
 It retains the tested pointer behavior and previous audio/asset/texture fixes.
-No console or Vita3K testing was performed for this build.
+LeZergan confirms RC29 works on Vita. No complete playthrough or new hardware
+FPS measurement is established. Local regressions do not boot Vita3K.
 The fixed 30 FPS target is not a guarantee against heavy-wave slowdowns.
 Package version remains 01.01 for compatibility with existing test installations.

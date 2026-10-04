@@ -7,7 +7,7 @@ body:
     attributes:
       label: Build ID
       description: From the BUILD line in userdata/loader.log.
-      placeholder: 452-v1-rc6
+      placeholder: 452-v1.1-rc29
     validations:
       required: true
   - type: input
@@ -34,6 +34,11 @@ body:
     attributes:
       label: Logs
       description: Attach userdata/loader.log before relaunching. For a crash, keep the matching psp2dmp for diagnosis. Do not upload game files or account credentials.
+  - type: textarea
+    id: settings_mods
+    attributes:
+      label: Settings and mod details, if relevant
+      description: Selected OBB filename/mod name, language override On or Off, requested language, and whether the issue involves the boot settings or a currency edit. Describe the files; do not attach proprietary OBBs or private saves.
   - type: textarea
     id: performance
     attributes:

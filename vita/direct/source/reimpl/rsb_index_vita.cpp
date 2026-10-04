@@ -28,10 +28,6 @@
 #include <atomic>
 
 namespace {
-#ifndef PVZ2_INDEX_PATH
-#define PVZ2_INDEX_PATH "app0:rsb452.idx"
-#endif
-
 constexpr char kAssetScheme[] = "ASSET:";
 constexpr size_t kAssetSchemeLen = sizeof(kAssetScheme) - 1;
 
@@ -80,58 +76,6 @@ std::string normalize(const char *guest_path) {
     return name;
 }
 
-/* The exact source archive is verified by the build script before packaging.
- * A small sequential metadata read replaces thousands of random OBB reads.
- * Never publish a partial or corrupt index; fall back to the archive parser. */
-bool load_bundled_index(uint64_t file_size, const std::vector<uint8_t> &head) {
-    FILE *file = std::fopen(PVZ2_INDEX_PATH, "rb");
-    if (!file) return false;
-    uint32_t header[8] = {};
-    bool ok = std::fread(header, sizeof(header), 1, file) == 1 &&
-        header[0] == 0x32495a50u && header[1] == 1 && header[2] == file_size &&
-        header[3] == pvz2_cache_crc32(0, head.data(), head.size()) && header[7] == 0 &&
-        header[4] > 0 && header[4] <= 16384 && header[5] <= 2 * 1024 * 1024 &&
-        header[5] >= header[4] * 37u;
-    std::vector<uint8_t> bytes(ok ? header[5] : 0);
-    if (ok) ok = std::fread(bytes.data(), 1, bytes.size(), file) == bytes.size() &&
-                 std::fgetc(file) == EOF && pvz2_cache_crc32(0, bytes.data(), bytes.size()) == header[6];
-    std::fclose(file);
-    if (!ok) return false;
-    std::unordered_map<std::string, Entry> parsed;
-    parsed.reserve(header[4]);
-    size_t pos = 0;
-    for (uint32_t i = 0; i < header[4]; ++i) {
-        if (bytes.size() - pos < 36) return false;
-        Entry e;
-        e.offset = rd32(bytes, pos) | (uint64_t(rd32(bytes, pos + 4)) << 32);
-        e.size = rd32(bytes, pos + 8);
-        uint32_t flags = rd32(bytes, pos + 12);
-        e.compressed = flags != 0;
-        e.block_offset = rd32(bytes, pos + 16);
-        e.block_size = rd32(bytes, pos + 20);
-        e.unpacked_size = rd32(bytes, pos + 24);
-        e.within_block = rd32(bytes, pos + 28);
-        uint32_t n = rd32(bytes, pos + 32);
-        pos += 36;
-        if (flags > 1 || n == 0 || n > 1024 || n > bytes.size() - pos ||
-            std::memchr(bytes.data() + pos, 0, n)) return false;
-        if (e.block_size) {
-            if (uint64_t(e.block_offset) + e.block_size > file_size ||
-                e.within_block > e.unpacked_size || e.size > e.unpacked_size - e.within_block)
-                return false;
-        } else if (!e.compressed && (e.offset > file_size || e.size > file_size - e.offset))
-            return false;
-        std::string name(reinterpret_cast<char *>(bytes.data() + pos), n);
-        if (!parsed.emplace(std::move(name), e).second) return false;
-        pos += n;
-    }
-    if (pos != bytes.size()) return false;
-    g_entries.swap(parsed);
-    telemetry_log("ASSETS", "bundled index: %u entries, %u bytes; skipped full RSG scan",
-                  header[4], header[5]);
-    return true;
-}
-
 bool load_index() {
     g_entries.clear();
 
@@ -156,11 +100,8 @@ bool load_index() {
         return false;
     }
 
-    if (load_bundled_index(file_size, head)) {
-        std::fclose(file);
-        return true;
-    }
-    telemetry_log("ASSETS", "bundled index unavailable/invalid; scanning original OBB");
+    // Same-size mods can retain the RSB header but change names and offsets.
+    telemetry_log("ASSETS", "indexing installed OBB (asset mods supported)");
     const uint32_t rsg_number = rd32(head, 0x28);
     const uint32_t rsg_info_begin = rd32(head, 0x2c);
     const uint32_t rsg_info_each = rd32(head, 0x30);
@@ -183,13 +124,18 @@ bool load_index() {
 
     uint32_t skipped = 0;
     uint32_t obscured = 0;
+    uint64_t directory_bytes=0;
+    auto malformed = [&]() {
+        l_error("[rsb-index] malformed or excessive resource directory");
+        g_entries.clear();std::fclose(file);return false;
+    };
     std::vector<uint8_t> rsg;
+    std::vector<uint8_t> header(0x60);
     for (uint32_t i = 0; i < rsg_number; ++i) {
         const size_t record = static_cast<size_t>(i) * rsg_info_each;
         const uint32_t rsg_offset = rd32(info, record + 0x80);
         if (rsg_offset == 0) continue;
 
-        std::vector<uint8_t> header(0x60);
         if (std::fseek(file, static_cast<long>(rsg_offset), SEEK_SET) != 0 ||
             std::fread(header.data(), 1, header.size(), file) != header.size()) {
             ++skipped;
@@ -201,6 +147,8 @@ bool load_index() {
         const bool compressed_data = (rd32(header, 0x10) & 2U) != 0;
         const uint32_t list_length = rd32(header, 0x48);
         const uint32_t list_begin = rd32(header, 0x4c);
+        directory_bytes+=list_length;
+        if(list_length>4*1024*1024 || directory_bytes>32*1024*1024)return malformed();
         if (list_length == 0 ||
             static_cast<uint64_t>(rsg_offset) + list_begin + list_length > file_size) {
             ++skipped;
@@ -217,12 +165,18 @@ bool load_index() {
         std::vector<std::pair<std::string, uint32_t>> stack;
         std::string name;
         uint32_t position = 0;
+        uint32_t visits=0;
         while (position + 4 <= list_length) {
+            /* Bound traversal independently of branch targets: a repacked
+             * archive must not make a cyclic trie hang or exhaust memory. */
+            if(++visits>list_length/4 || name.size()>1024 || stack.size()>1024)return malformed();
             const uint8_t ch = rsg[position];
             const uint32_t branch = rd24(rsg, position + 1);
+            if(branch && uint64_t(branch)*4+4>list_length)return malformed();
             if (ch == 0) {
                 if (position + 16 > list_length) break;
                 const uint32_t flag = rd32(rsg, position + 4);
+                if(flag>1 || (flag==1 && uint64_t(position)+36>list_length))return malformed();
                 const uint32_t offset = rd32(rsg, position + 8);
                 const uint32_t size = rd32(rsg, position + 12);
                 if (!name.empty()) {
@@ -231,11 +185,16 @@ bool load_index() {
                     entry.size = size;
                     entry.compressed = flag == 1;
                     if (compressed_data && flag == 0) {
+                        uint64_t block_offset=uint64_t(rsg_offset)+data_offset;
+                        if(block_offset>0x7fffffffu || block_offset+rd32(header,0x1c)>file_size ||
+                           offset>rd32(header,0x20) || size>rd32(header,0x20)-offset)return malformed();
                         entry.block_offset = rsg_offset + data_offset;
                         entry.block_size = rd32(header, 0x1c);
                         entry.unpacked_size = rd32(header, 0x20);
                         entry.within_block = offset;
                     }
+                    if(flag==0 && !compressed_data && entry.offset+size>file_size)return malformed();
+                    if(g_entries.size()>=100000)return malformed();
                     g_entries.emplace(name, entry);
                 }
                 position += 16 + (flag == 1 ? 20 : 0);

@@ -16,11 +16,13 @@
   Those hashes record the tested binaries; they do not establish reproducible
   rebuild flags for every externally installed dependency.
 
-## Supply the matching archive locally
+## Game library and mod archives
 
-Place your archive at `game/game.obb`, or pass `-GameObb` below. The index
-generator validates the full OBB SHA-256 before writing the small bundled index.
-The game library is required on the Vita, but is not needed to compile the port.
+Building the current port needs neither an OBB nor a game library. At runtime supply the
+4.5.2 ARMv7 library and an RSB archive compatible with that engine as `game.obb`.
+The original OBB below is a reference, not an enforced size/hash requirement.
+The loader reads the installed archive's directory, accepting modified lengths,
+resource names and offsets without a stock bundled index.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
@@ -30,10 +32,10 @@ The game library is required on the Vita, but is not needed to compile the port.
 ## Windows build
 
 ```powershell
-./scripts/build-vita.ps1 -SoftfpVitaSdk C:/tools/vitasdk -GameObb D:/game-files/game.obb
+./scripts/build-vita.ps1 -Configuration Release -SoftfpVitaSdk C:/tools/vitasdk
 ```
 
-The script prepares LiveArea PNGs, generates the resource index, configures the
+The script prepares LiveArea PNGs, configures the
 active CMake target and copies the resulting VPK to `out/pvz2-vita-latest.vpk`.
 LiveArea preparation reads the supplied XML and supports the original `a1`
 gate and the new `ad0` custom launch frame. It generates an explicit CMake file
@@ -49,8 +51,7 @@ steps are:
 
 ```sh
 python3 scripts/prepare-livearea.py
-python3 scripts/build-rsb-index.py --obb /path/to/game.obb
-cmake -S vita/direct -B build-vita-direct -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake -S vita/direct -B build-vita-direct -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-vita-direct
 ```
 
@@ -63,6 +64,12 @@ files under `userdata/`. Game source/asset files are never compiled into the VPK
 With a host GCC installed and `out/` created:
 
 ```sh
+mkdir -p out
+python3 scripts/check-port-menu.py
+python3 scripts/check-port-settings.py
+python3 scripts/check-save-editor.py
+python3 scripts/check-obb-mods.py
+python3 scripts/check-sprite-uniforms.py
 python3 scripts/check-touch-render.py
 python3 scripts/check-program-cache.py
 python3 scripts/check-program-binding.py
@@ -83,6 +90,11 @@ python3 scripts/check-thread-bridge.py
 python3 scripts/check-thread-attributes.py
 python3 scripts/check-import-resolver.py
 ```
+
+The first five checks exercise boot settings, language defaults/persistence,
+lossless coins/gems transactions and recovery, compatible mod archives and
+sprite-uniform upload caching. They work with synthetic data when game files
+are absent. See the [settings guide](settings.md) for the public controls.
 
 These compile the production functions with minimal system adapters. They
 check multi-contact IDs, read failures, idle sampling recovery, IME release

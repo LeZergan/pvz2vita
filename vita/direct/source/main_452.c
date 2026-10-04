@@ -36,10 +36,14 @@
 #include "utils/text_field_452.h"
 #include "utils/input_replay.h"
 #include "utils/boot_check.h"
+#include "utils/port_menu.h"
 #include "utils/dialog.h"
 #include "reimpl/rsb_index_vita.h"
 
 #define PVZ2_PATH GAME_DATA_PATH "libPVZ2.so"
+#ifndef PVZ2_SKIP_BOOT_CHECKS
+#define PVZ2_SKIP_BOOT_CHECKS 0
+#endif
 
 /* PvZ2Native src/game/symbols.cpp, 4.5.2 entry. */
 #define OFF_GAME_APP_INITIALIZE                0x00cc033cu
@@ -460,17 +464,20 @@ int main(void) {
     char setup_error[1024];
     /* No logger may create a conflicting file until old data is migrated. */
     if (!pvz2_prepare_userdata(setup_error, sizeof(setup_error))) pvz2_boot_screen(setup_error);
+    pvz2_port_menu();
     telemetry_reset();
     telemetry_log("BOOT", "PvZ2 Vita 4.5.2 ROW 30-FPS direct loader");
 #if PVZ2_INPUT_REPLAY
-    telemetry_log("BUILD", "452-v1.1-rc25-INPUT-REPLAY " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc29-INPUT-REPLAY " __DATE__ " " __TIME__);
     telemetry_log("DIAGNOSTIC", "bounded native input replay; cloned profiles only; NOT a release build");
 #elif PVZ2_STRESS_READ_KIB > 0 || PVZ2_STRESS_READ_LATENCY_US > 0
-    telemetry_log("BUILD", "452-v1.1-rc25-IO-STRESS " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc29-IO-STRESS " __DATE__ " " __TIME__);
     telemetry_log("DIAGNOSTIC", "artificial per-read delay: %u KiB/s plus %u us; NOT a release build",
                   PVZ2_STRESS_READ_KIB, PVZ2_STRESS_READ_LATENCY_US);
+#elif PVZ2_SKIP_BOOT_CHECKS
+    telemetry_log("BUILD", "452-v1.1-rc29-NO-BOOT-CHECKS " __DATE__ " " __TIME__);
 #else
-    telemetry_log("BUILD", "452-v1.1-rc25 " __DATE__ " " __TIME__);
+    telemetry_log("BUILD", "452-v1.1-rc29 " __DATE__ " " __TIME__);
 #endif
     int32_t epoch_probe = 6;
     bionic_tm local_epoch;
@@ -479,8 +486,12 @@ int main(void) {
                       (unsigned)sizeof(local_epoch), local_epoch.tm_year+1900,
                       local_epoch.tm_mon+1, local_epoch.tm_mday, local_epoch.tm_hour,
                       local_epoch.tm_min, local_epoch.tm_sec, local_epoch.tm_gmtoff);
+#if !PVZ2_SKIP_BOOT_CHECKS
     if (!pvz2_boot_check(setup_error, sizeof(setup_error))) fatal_error("%s", setup_error);
     telemetry_log("SETUP", "files/dependencies/writable save paths checked; OBB=%s", pvz2_obb_path());
+#else
+    telemetry_log("SETUP", "port-added boot preflight disabled; OBB=%s", pvz2_obb_path());
+#endif
     clocks_init();
     extern void pvz2_init_thread_affinity(void);
     pvz2_init_thread_affinity();
@@ -488,6 +499,7 @@ int main(void) {
     pvz2_pixels_init((unsigned)pvz2_cpu_core_count() - 1u);
     log_memory_stage("startup");
 
+#if !PVZ2_SKIP_BOOT_CHECKS
     /* Catch a mixed hard/soft-float SDK before game data gets corrupted.
      * Volatile arguments prevent folding away the actual ABI calls. */
     volatile float angle = 0.5f;
@@ -515,6 +527,7 @@ int main(void) {
         fatal_error("This VPK failed its memory compatibility check.\nInstall a fresh copy of the Vita release VPK.\n\nDetails: ux0:data/pvz2/userdata/loader.log");
     }
     telemetry_log("ABI", "memchr import self-check passed");
+#endif
 
     /* Match PvZ2Native boot_native_library: the fake Java runtime exists before
      * constructors, then init_array precedes JNI_OnLoad. */

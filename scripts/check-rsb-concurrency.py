@@ -14,7 +14,7 @@ code=r'''
 #include <cstring>
 #include <cctype>
 '''
-code+=s[s.index('constexpr char kAssetScheme'):s.index('/* The exact source archive')]
+code+=s[s.index('constexpr char kAssetScheme'):s.index('bool load_index()')]
 code+=r'''
 static pthread_mutex_t gate=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t changed=PTHREAD_COND_INITIALIZER;

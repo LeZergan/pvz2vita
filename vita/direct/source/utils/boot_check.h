@@ -5,7 +5,6 @@
 extern "C" {
 #endif
 #define PVZ2_LIBRARY_BYTES 18198492u
-#define PVZ2_OBB_BYTES 656855040u
 /* Chosen once before workers start. Existing installations keep working. */
 const char *pvz2_obb_path(void);
 int pvz2_boot_check(char *error, size_t capacity);

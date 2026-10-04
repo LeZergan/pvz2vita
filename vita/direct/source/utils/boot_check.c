@@ -7,10 +7,23 @@
 #include <errno.h>
 #include <psp2/io/stat.h>
 
-static const char *obb_path = GAME_DATA_PATH "game.obb";
-const char *pvz2_obb_path(void) { return obb_path; }
+#ifndef PVZ2_SKIP_BOOT_CHECKS
+#define PVZ2_SKIP_BOOT_CHECKS 0
+#endif
 
-static int check_file(const char *path, uint32_t expected, int library,
+static const char *obb_path = GAME_DATA_PATH "game.obb";
+const char *pvz2_obb_path(void) {
+    /* Path selection is required even when the optional boot preflight is
+     * compiled out. It does not open, hash, size-check, or write any file. */
+    obb_path = GAME_DATA_PATH "game.obb";
+    if (!file_exists(GAME_DATA_PATH "game.obb") &&
+        file_exists(GAME_DATA_PATH "main.147.com.ea.game.pvz2_row.obb"))
+        obb_path = GAME_DATA_PATH "main.147.com.ea.game.pvz2_row.obb";
+    return obb_path;
+}
+
+#if !PVZ2_SKIP_BOOT_CHECKS
+static int check_file(const char *path, uint32_t expected,
                       char *error, size_t capacity) {
     FILE *file = fopen(path, "rb");
     if (!file) {
@@ -32,16 +45,12 @@ static int check_file(const char *path, uint32_t expected, int library,
     unsigned char header[32];
     rewind(file);
     ok = fread(header, 1, sizeof(header), file) == sizeof(header);
-    if (library) {
-        const unsigned char elf[] = {0x7f, 'E', 'L', 'F', 1, 1, 1};
-        uint64_t init = 0, draw = 0;
-        ok = ok && !memcmp(header, elf, sizeof(elf)) && header[18] == 40 && header[19] == 0;
-        ok = ok && fseek(file, 0xcc033c, SEEK_SET) == 0 && fread(&init, 8, 1, file) == 1;
-        ok = ok && fseek(file, 0xcc7e60, SEEK_SET) == 0 && fread(&draw, 8, 1, file) == 1;
-        ok = ok && init == UINT64_C(0xE24DD084E92D4FF0) && draw == UINT64_C(0xE59F1010E59F0010);
-    } else {
-        ok = ok && !memcmp(header, "1bsr\x04\x00\x00\x00", 8);
-    }
+    const unsigned char elf[] = {0x7f, 'E', 'L', 'F', 1, 1, 1};
+    uint64_t init = 0, draw = 0;
+    ok = ok && !memcmp(header, elf, sizeof(elf)) && header[18] == 40 && header[19] == 0;
+    ok = ok && fseek(file, 0xcc033c, SEEK_SET) == 0 && fread(&init, 8, 1, file) == 1;
+    ok = ok && fseek(file, 0xcc7e60, SEEK_SET) == 0 && fread(&draw, 8, 1, file) == 1;
+    ok = ok && init == UINT64_C(0xE24DD084E92D4FF0) && draw == UINT64_C(0xE59F1010E59F0010);
     fclose(file);
     if (!ok) snprintf(error, capacity, "Unsupported or damaged game file:\n%s\n\n"
                       "Use the original PvZ2 4.5.2 ROW\n(version 147) game files.\n"
@@ -69,12 +78,17 @@ int pvz2_boot_check(char *error, size_t capacity) {
                  "or ur0:data/external/libshacccg.suprx\n\nThen launch the game again.");
         return 0;
     }
-    if (!check_file(GAME_DATA_PATH "libPVZ2.so", PVZ2_LIBRARY_BYTES, 1, error, capacity)) return 0;
+    if (!check_file(GAME_DATA_PATH "libPVZ2.so", PVZ2_LIBRARY_BYTES, error, capacity)) return 0;
     /* Prefer the simple name; never silently ignore a corrupt newer copy. */
     obb_path = file_exists(GAME_DATA_PATH "game.obb") ? GAME_DATA_PATH "game.obb" :
                GAME_DATA_PATH "main.147.com.ea.game.pvz2_row.obb";
     if (!file_exists(obb_path)) obb_path = GAME_DATA_PATH "game.obb";
-    if (!check_file(obb_path, PVZ2_OBB_BYTES, 0, error, capacity)) return 0;
+    /* Asset mods may change every archive byte and its length. The resource
+     * parser handles format/bounds errors when it opens the archive. */
+    if (!file_exists(obb_path)) {
+        snprintf(error, capacity, "Missing game archive:\n%s\n\nCopy your game.obb into ux0:data/pvz2/.", obb_path);
+        return 0;
+    }
 
     /* No save is touched. Failure is actionable before the game creates one. */
     const char *directories[] = {DATA_PATH, DATA_PATH "No_Backup", DATA_PATH "cache"};
@@ -102,3 +116,11 @@ int pvz2_boot_check(char *error, size_t capacity) {
     }
     return 1;
 }
+#else
+int pvz2_boot_check(char *error, size_t capacity) {
+    /* Keep the ABI available to shared code, but compile every plugin/file-size,
+     * header, fingerprint, and write probe out of this compatibility variant. */
+    if (error && capacity) error[0] = 0;
+    return 1;
+}
+#endif

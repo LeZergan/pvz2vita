@@ -1,3 +1,4 @@
+#include "utils/port_locale.h"
 #include "utils/boot_check.h"
 #include <stdarg.h>
 #include <stdint.h>
@@ -671,7 +672,7 @@ static void jstr_to_path(jstring js, char *buf, size_t n) {
     buf[0] = 0;
     if (!js) return;
     const char *s = jni->GetStringUTFChars(&jni, js, NULL);
-    if (s) { snprintf(buf, n, "%s", s); jni->ReleaseStringUTFChars(&jni, js, s); }
+    if (s) { snprintf(buf, n, "%s", s); jni->ReleaseStringUTFChars(&jni, js, (char *)s); }
 }
 
 /* ------------------------------------------------------------------ *
@@ -907,9 +908,9 @@ static jobject SysGetProductVersionString(jmethodID id, va_list a){ (void)id; (v
 static jobject GetApplicationVersion(jmethodID id, va_list a)     { (void)id; (void)a; return ret_string("4.5.2"); }
 static jobject SysGetPackageName(jmethodID id, va_list a)         { (void)id; (void)a; return ret_string("com.ea.game.pvz2_row"); }
 static jobject SysGetActivityName(jmethodID id, va_list a)        { (void)id; (void)a; return ret_string("com.popcap.PvZ2.PvZ2GameActivity"); }
-static jobject SysGetUserLocale(jmethodID id, va_list a)          { (void)id; (void)a; return ret_string("en_US"); }
-static jobject SysGetCountryCode(jmethodID id, va_list a)         { (void)id; (void)a; return ret_string("US"); }
-static jobject GetLanguage(jmethodID id, va_list a)               { (void)id; (void)a; return ret_string("en"); }
+static jobject SysGetUserLocale(jmethodID id, va_list a)          { (void)id; (void)a; return ret_string(pvz2_locale()); }
+static jobject SysGetCountryCode(jmethodID id, va_list a)         { (void)id; (void)a; return ret_string(pvz2_country()); }
+static jobject GetLanguage(jmethodID id, va_list a)               { (void)id; (void)a; return ret_string(pvz2_language()); }
 static jobject SysGetUserCurrencyCode(jmethodID id, va_list a)    { (void)id; (void)a; return ret_string("USD"); }
 static jobject SysGetUserCurrencySymbol(jmethodID id, va_list a)  { (void)id; (void)a; return ret_string("$"); }
 static jint SysGetProductVersionInt(jmethodID id, va_list a)      { (void)id; (void)a; return 1; }
@@ -1185,7 +1186,7 @@ static jboolean IsSignedIn(jmethodID id, va_list args) {
 
 static jobject GetAssetManager(jmethodID id, va_list args) { (void)id; (void)args; ensure_runtime_fields(); return g_asset_manager_obj; }
 static jobject FmodAudioDeviceInit(jmethodID id, va_list args) { (void)id; (void)args; return ret_string("fmod_audio_device"); }
-static jobject GetLocale(jmethodID id, va_list args) { (void)id; (void)args; return ret_string("en_US"); }
+static jobject GetLocale(jmethodID id, va_list args) { (void)id; (void)args; return ret_string(pvz2_locale()); }
 static jobject GetHardwareOS(jmethodID id, va_list args) { (void)id; (void)args; return ret_string("Android 4.4.4"); }
 static jobject GetHardwareBoard(jmethodID id, va_list args) { (void)id; (void)args; return ret_string("vita"); }
 

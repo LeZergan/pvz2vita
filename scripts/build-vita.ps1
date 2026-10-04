@@ -9,7 +9,8 @@ param(
     [int]$StressReadKiBPerSecond = 0,
     [ValidateRange(0, 100000)]
     [int]$StressReadLatencyUs = 0,
-    [switch]$ReplayInput
+    [switch]$ReplayInput,
+    [switch]$SkipBootChecks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +27,10 @@ if ($ReplayInput -and (-not $BuildDirectory -or -not $OutputDirectory -or
     $buildDir -eq (Join-Path $repoRoot 'build-vita-direct') -or $outDir -eq (Join-Path $repoRoot 'out'))) {
     throw 'Input replay requires separate build and output directories; it must not replace the release VPK.'
 }
+if ($SkipBootChecks -and (-not $BuildDirectory -or -not $OutputDirectory -or
+    $buildDir -eq (Join-Path $repoRoot 'build-vita-direct') -or $outDir -eq (Join-Path $repoRoot 'out'))) {
+    throw 'No-boot-checks builds require separate build and output directories; they must not replace the standard release VPK.'
+}
 
 if (-not (Test-Path (Join-Path $SoftfpVitaSdk 'bin\arm-vita-eabi-gcc.exe'))) {
     throw "Softfp VitaSDK not found at $SoftfpVitaSdk"
@@ -41,16 +46,12 @@ if ($abi -notmatch 'softfp') {
 
 py -3.12 (Join-Path $PSScriptRoot 'prepare-livearea.py')
 if ($LASTEXITCODE -ne 0) { throw "LiveArea preparation failed" }
-if ($GameObb) {
-    py -3.12 (Join-Path $PSScriptRoot 'build-rsb-index.py') --obb $GameObb
-} else {
-    py -3.12 (Join-Path $PSScriptRoot 'build-rsb-index.py')
-}
-if ($LASTEXITCODE -ne 0) { throw "RSB index generation failed" }
+# Archives are supplied at runtime; builds no longer require or fingerprint one.
 # Always pass zero defaults so a reused build cache cannot retain stress settings.
 cmake -S (Join-Path $repoRoot 'vita\direct') -B $buildDir -G Ninja "-DCMAKE_BUILD_TYPE=$Configuration" `
     "-DPVZ2_STRESS_READ_KIB=$StressReadKiBPerSecond" "-DPVZ2_STRESS_READ_LATENCY_US=$StressReadLatencyUs" `
-    "-DPVZ2_INPUT_REPLAY=$($ReplayInput.IsPresent.ToString().ToUpperInvariant())"
+    "-DPVZ2_INPUT_REPLAY=$($ReplayInput.IsPresent.ToString().ToUpperInvariant())" `
+    "-DPVZ2_SKIP_BOOT_CHECKS=$($SkipBootChecks.IsPresent.ToString().ToUpperInvariant())"
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXITCODE" }
 cmake --build $buildDir
 if ($LASTEXITCODE -ne 0) { throw "Vita build failed with exit code $LASTEXITCODE" }
