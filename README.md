@@ -11,12 +11,11 @@
 
 Unofficial PS Vita loader for the Android 4.5.2 ROW build of *Plants vs. Zombies 2*.
 
-[Download RC29](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc29) — [Setup](#setup) — [Settings guide](docs/settings.md) — [Report a problem](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
+[Download v1.1](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc29) — [Setup](#setup) — [Settings guide](docs/settings.md) — [Report a problem](https://github.com/LeZergan/pvz2vita/issues/new?template=bug-report.yml) — [Discord](https://discord.gg/KgSzU8nd8g)
 
 | | |
 | :-- | :-- |
-| Current release | PvZ2 1.1 RC29 (`452-v1.1-rc29`) |
-| Previous release | [1.1 RC25](https://github.com/LeZergan/pvz2vita/releases/tag/v1.1-rc25) |
+| Current release | Plants vs. Zombies 2 - PS Vita v1.1 (`452-v1.1-rc29`) |
 | Supported Android set | 4.5.2 ROW, version 147, ARMv7 |
 | Data path | `ux0:data/pvz2` |
 | Licence | [MIT](LICENSE), with third-party notices |

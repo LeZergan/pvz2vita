@@ -1,4 +1,4 @@
-# 1.1
+# Plants vs. Zombies 2 - PS Vita v1.1
 
 - Added boot settings with language selection, save editing and OBB information.
 - Fixed settings input and display buffering. Language override defaults **Off / English**, with six optional languages.
