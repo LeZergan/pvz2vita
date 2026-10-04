@@ -1,1 +1,1 @@
-Place your own version-147 archive here as game.obb. Game data is ignored by Git.
+Game files are not required to build the loader. At runtime, copy your own matching ARMv7 libPVZ2.so and OBB into ux0:data/pvz2/. The original main.147.com.ea.game.pvz2_row.obb filename is supported; game.obb is also accepted. Game data is not included and is ignored by Git.

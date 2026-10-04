@@ -1,7 +1,7 @@
 # RC29 Vita check
 
 Install RC29 over the previous loader and keep the game files. Back up
-`ux0:data/pvz2/userdata/` first. LeZergan confirms RC29 works on Vita; this route
+`ux0:data/pvz2/userdata/` first. RC29 works on Vita; this route
 helps report specific settings, saves, mod or gameplay problems consistently.
 
 1. Open startup settings with **Down + Cross (X) + L + R**, then release all

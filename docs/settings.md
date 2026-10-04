@@ -29,8 +29,9 @@ and readable RSB version/resource-group count. An unknown header or unreadable
 archive is reported as information. Settings do not compare the OBB with stock
 sizes or hashes and do not require particular languages or a mod allowlist.
 
-Put a compatible mod archive at `ux0:data/pvz2/game.obb`. The older filename
-`main.147.com.ea.game.pvz2_row.obb` also works; `game.obb` wins when both exist.
+Put a compatible mod archive in `ux0:data/pvz2/`. The original filename
+`main.147.com.ea.game.pvz2_row.obb` is supported. `game.obb` also works and wins
+when both archive filenames exist.
 Close the game before replacing an archive, and back up `userdata/` before
 switching mods. The loader rebuilds its resource index from the installed OBB;
 changed names, offsets and archive lengths are accepted. Old extracted blocks

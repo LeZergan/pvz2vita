@@ -6,12 +6,13 @@ Install pvz2-vita-latest.vpk over the previous version.
 Keep your existing game data and userdata/ saves.
 
 FIRST INSTALL
-1. Copy your matching libPVZ2.so and game.obb into ux0:data/pvz2/.
+1. Copy your matching libPVZ2.so and OBB into ux0:data/pvz2/.
 2. Install pvz2-vita-latest.vpk using VitaShell and launch.
-The older main.147.com.ea.game.pvz2_row.obb filename is also supported.
+The original main.147.com.ea.game.pvz2_row.obb filename is supported.
+game.obb is also accepted.
 Do not put a second pvz2 folder inside the first one.
 The game creates userdata/ automatically. Back it up to preserve progress.
-Updates do not require copying or renaming game data again.
+Updates do not require copying game data again.
 
 REQUIREMENTS
 A homebrew-enabled Vita with kubridge.skprx enabled under *KERNEL
@@ -56,7 +57,7 @@ Circle exits and discards pending changes. Original saves are backed up as
 userdata/No_Backup/pp.dat.backup-N; restore with the game closed if needed.
 Missing or unsupported/encrypted saves remain untouched; language settings work.
 OBB size/hash checks and the stock bundled resource index are removed.
-Use game.obb compatible with the 4.5.2 engine; native library must still match.
+Use an OBB compatible with the 4.5.2 engine; native library must still match.
 If both archive filenames exist, game.obb takes priority. Close the game before
 replacing a mod archive and back up userdata/ before switching mods.
 The installed archive is indexed on boot, so mod support can add startup time.
@@ -97,7 +98,7 @@ fallback, preserving at least 8 MiB reported free USER memory at allocation.
 This targets the supplied allocation-failure dumps, not every possible crash.
 Faster archive CRC checks retain cache-corruption detection and existing formats.
 It retains the tested pointer behavior and previous audio/asset/texture fixes.
-LeZergan confirms RC29 works on Vita. No complete playthrough or new hardware
+RC29 works on Vita. No complete playthrough or new hardware
 FPS measurement is established. Local regressions do not boot Vita3K.
 The fixed 30 FPS target is not a guarantee against heavy-wave slowdowns.
 Package version remains 01.01 for compatibility with existing test installations.

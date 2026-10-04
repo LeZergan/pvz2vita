@@ -19,7 +19,8 @@
 ## Game library and mod archives
 
 Building the current port needs neither an OBB nor a game library. At runtime supply the
-4.5.2 ARMv7 library and an RSB archive compatible with that engine as `game.obb`.
+4.5.2 ARMv7 library and an RSB archive compatible with that engine. The original
+`main.147.com.ea.game.pvz2_row.obb` filename and `game.obb` are both accepted.
 The original OBB below is a reference, not an enforced size/hash requirement.
 The loader reads the installed archive's directory, accepting modified lengths,
 resource names and offsets without a stock bundled index.
@@ -27,7 +28,7 @@ resource names and offsets without a stock bundled index.
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
 | `libPVZ2.so` | 18198492 | `eb96a61de9c00538b251420eb2674423eda1865b03a276b03e9cbc9d63eeee00` |
-| `game.obb` | 656855040 | `aa76069dd3f5120cdf733de5e9b5946eab53d8bfdaccb4cb06bdd92bc0aa3abe` |
+| `main.147.com.ea.game.pvz2_row.obb` | 656855040 | `aa76069dd3f5120cdf733de5e9b5946eab53d8bfdaccb4cb06bdd92bc0aa3abe` |
 
 ## Windows build
 

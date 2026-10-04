@@ -3,10 +3,10 @@
 Local release candidate `452-v1.1-rc29`; no public release or Vita installation
 performed. Physical Vita validation remains required before a final release.
 
-Publication update, October 4: LeZergan confirms RC29 works on Vita and requests
-publication as a regular release. The local audit below records the evidence
-available before that confirmation; no complete playthrough or new hardware FPS
-measurement was supplied with it.
+Publication update, October 4: RC29 works on Vita and is published as the regular
+1.1 release. The local audit below records the evidence available before
+publication; it did not include a complete playthrough or new hardware FPS
+measurement.
 
 The [October 4 additional scenario audit](rc29-update-scenarios.md) adds 13
 production-menu cases and six save transaction cases. All pass; runtime code
@@ -107,4 +107,4 @@ compatible mod OBB and a busy zombie wave. Confirm suspend/resume, audio/input
 and normal saving after a level. No complete playthrough or hardware FPS
 measurement is established by host tests. These device checks were pending at
 audit time, when the latest published release was RC25. See the publication
-update at the top for LeZergan's subsequent confirmation and release request.
+update at the top for the current release status.

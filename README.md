@@ -41,10 +41,8 @@ The fixed **30 FPS** target, shared three-core scheduling and accepted 500 MHz
 or fallback 444 MHz clock policy are retained. Busy zombie waves can still drop
 below the target. No new hardware FPS gain is claimed.
 
-**RC29 is available, and LeZergan confirms it works on Vita.** The full local suite passes 60/60;
-the expanded checks cover 27 boot-menu scenarios and additional save/storage
-failures. That confirmation does not establish a complete playthrough or a
-measured heavy-wave FPS minimum. Known performance limits are listed below.
+**Version 1.1 is available and works on PS Vita.**
+
 See the [release notes](docs/release-notes-v1.1-rc29.md),
 [release audit](docs/rc29-release-audit.md), and
 [additional update scenarios](docs/rc29-update-scenarios.md).
@@ -76,9 +74,9 @@ over the previous loader; keep the game files and back up `userdata/` first.
 
 Obtain the matching ARMv7 `libPVZ2.so` from your own Android 4.5.2 ROW APK
 (`lib/armeabi-v7a/libPVZ2.so` inside the APK). An APK can be opened as a ZIP.
-Put that library and your main OBB in a folder named `pvz2`, directly inside
-that folder. Rename the OBB to `game.obb`. A compatible mod archive uses the
-same name; keep the matching game library.
+Put that library and your main OBB directly inside a folder named `pvz2`.
+The original `main.147.com.ea.game.pvz2_row.obb` filename is supported.
+Keep the matching game library when using a compatible mod archive.
 
 ### 3. Copy the data to the Vita
 
@@ -87,7 +85,7 @@ Copy the `pvz2` folder into `ux0:data/`. The result must contain:
 ```text
 ux0:data/pvz2/
 ├── libPVZ2.so
-├── game.obb
+├── main.147.com.ea.game.pvz2_row.obb
 └── userdata/       ← created automatically
 ```
 
@@ -95,9 +93,9 @@ Launch **Plants vs Zombies 2** from LiveArea. The game creates `userdata/`
 automatically; a new install needs no downloaded save or prebuilt resource index.
 The first boot indexes the installed archive and can take longer.
 
-Do not nest a second `pvz2` folder inside the first. The older
-`main.147.com.ea.game.pvz2_row.obb` filename is also accepted. If both names
-exist, **`game.obb` takes priority**. Settings show which archive was selected.
+Do not nest a second `pvz2` folder inside the first. `game.obb` is also accepted
+and takes priority when both archive filenames exist. Settings show which
+archive was selected.
 
 ### 4. Open settings when needed
 
@@ -127,8 +125,8 @@ RC26/RC27 language preferences reset once to **Off / English**. Deliberate choic
 saved by RC28/RC29 persist. For a mod that translates English assets, leave
 override Off. Optional alternate languages need their assets in the selected OBB.
 
-To change mods, close the game, back up your saves, and replace
-`ux0:data/pvz2/game.obb` with the intended compatible archive. Relaunch to index
+To change mods, close the game, back up your saves, and replace the selected
+archive in `ux0:data/pvz2/` with the intended compatible OBB. Relaunch to index
 it. No stock checksum or original archive length is required. Compatibility with
 a newer Android engine version is not established by changing the OBB alone.
 

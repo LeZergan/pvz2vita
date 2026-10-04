@@ -2,9 +2,9 @@
 
 Verdict at audit time: RC29 was ready for a controlled Vita test update. This
 audit adds host regressions; no runtime code changed and no replacement binary
-was necessary. Publication update: LeZergan subsequently confirms RC29 works on
-Vita and requests a regular release. That report does not supply a complete
-playthrough or a new hardware FPS measurement.
+was necessary. Publication update: RC29 works on Vita and is published as the
+regular 1.1 release. This local audit did not include a complete playthrough or
+a new hardware FPS measurement.
 
 ## Additional production-menu checks
 
@@ -70,4 +70,4 @@ On Vita, verify this exact build:
 No new on-device evidence, edited-save in-game reload, complete playthrough or
 hardware FPS measurement was obtained in this audit. The code and package were
 locally verified; the device checks above were outstanding at that point.
-The later user confirmation and regular-release request are recorded at the top.
+The current release status is recorded at the top.
