@@ -97,6 +97,28 @@ int connect_soloader(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 int poll_soloader(struct pollfd *fds, nfds_t nfds, int timeout);
 int select_soloader(int nfds, fd_set *readfds, fd_set *writefds,
                     fd_set *exceptfds, struct timeval *timeout);
+ssize_t send_offline(int fd, const void *buf, size_t len, int flags);
+ssize_t sendto_offline(int fd, const void *buf, size_t len, int flags,
+                       const struct sockaddr *to, socklen_t tolen);
+ssize_t sendmsg_offline(int fd, const struct msghdr *msg, int flags);
+ssize_t recv_offline(int fd, void *buf, size_t len, int flags);
+ssize_t recvfrom_offline(int fd, void *buf, size_t len, int flags,
+                         struct sockaddr *from, socklen_t *fromlen);
+ssize_t recvmsg_offline(int fd, struct msghdr *msg, int flags);
+int bind_offline(int fd, const struct sockaddr *addr, socklen_t len);
+int listen_offline(int fd, int backlog);
+int accept_offline(int fd, struct sockaddr *addr, socklen_t *len);
+int setsockopt_offline(int fd, int level, int name, const void *val, socklen_t len);
+int getsockopt_offline(int fd, int level, int name, void *val, socklen_t *len);
+int getsockname_offline(int fd, struct sockaddr *addr, socklen_t *len);
+int getpeername_offline(int fd, struct sockaddr *addr, socklen_t *len);
+int shutdown_offline(int fd, int how);
+struct hostent *gethostbyaddr_offline(const void *addr, socklen_t len, int type);
+struct servent *getservbyname_offline(const char *name, const char *proto);
+int gethostname_offline(char *name, size_t len);
+const char *inet_ntop_offline(int af, const void *src, char *dst, socklen_t size);
+int inet_pton_offline(int af, const char *src, void *dst);
+int pipe_offline(int fds[2]);
 
 int sem_close_soloader(sem_t *sem);
 

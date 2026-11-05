@@ -14,6 +14,7 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/clib.h>
 #include <string.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/rtc.h>
@@ -480,6 +481,137 @@ int select_soloader(int nfds, fd_set *readfds, fd_set *writefds,
     if (!timeout) l_info("select(nfds=%d, timeout=NULL)", nfds);
     else if (timeout->tv_sec > 30) l_info("select(nfds=%d, timeout=%lds)", nfds, (long)timeout->tv_sec);
     return select(nfds, readfds, writefds, exceptfds, timeout);
+}
+
+/* Link-level extension of NETWORK_FORCE_OFFLINE: every remaining socket-family import
+ * fails synchronously. socket()/connect()/DNS above already fail under
+ * NETWORK_FORCE_OFFLINE; these close the direct newlib/sceNet mappings so no game
+ * path can reach SceNet even with a stray fd. inet_* stay pure C (no I/O). */
+static int net_offline_fail(const char *what) {
+    static unsigned log_count = 0;
+    if (log_count < 32U) {
+        l_warn("%s: forced offline (pvz2-vita strip)", what);
+        log_count++;
+    }
+    errno = ENETUNREACH;
+    return -1;
+}
+
+ssize_t send_offline(int fd, const void *buf, size_t len, int flags) {
+    (void)fd; (void)buf; (void)len; (void)flags;
+    return net_offline_fail("send");
+}
+ssize_t sendto_offline(int fd, const void *buf, size_t len, int flags,
+                       const struct sockaddr *to, socklen_t tolen) {
+    (void)fd; (void)buf; (void)len; (void)flags; (void)to; (void)tolen;
+    return net_offline_fail("sendto");
+}
+ssize_t sendmsg_offline(int fd, const struct msghdr *msg, int flags) {
+    (void)fd; (void)msg; (void)flags;
+    return net_offline_fail("sendmsg");
+}
+ssize_t recv_offline(int fd, void *buf, size_t len, int flags) {
+    (void)fd; (void)buf; (void)len; (void)flags;
+    return net_offline_fail("recv");
+}
+ssize_t recvfrom_offline(int fd, void *buf, size_t len, int flags,
+                         struct sockaddr *from, socklen_t *fromlen) {
+    (void)fd; (void)buf; (void)len; (void)flags; (void)from; (void)fromlen;
+    return net_offline_fail("recvfrom");
+}
+ssize_t recvmsg_offline(int fd, struct msghdr *msg, int flags) {
+    (void)fd; (void)msg; (void)flags;
+    return net_offline_fail("recvmsg");
+}
+int bind_offline(int fd, const struct sockaddr *addr, socklen_t len) {
+    (void)fd; (void)addr; (void)len;
+    return net_offline_fail("bind");
+}
+int listen_offline(int fd, int backlog) {
+    (void)fd; (void)backlog;
+    return net_offline_fail("listen");
+}
+int accept_offline(int fd, struct sockaddr *addr, socklen_t *len) {
+    (void)fd; (void)addr; (void)len;
+    return net_offline_fail("accept");
+}
+int setsockopt_offline(int fd, int level, int name, const void *val, socklen_t len) {
+    (void)fd; (void)level; (void)name; (void)val; (void)len;
+    return net_offline_fail("setsockopt");
+}
+int getsockopt_offline(int fd, int level, int name, void *val, socklen_t *len) {
+    (void)fd; (void)level; (void)name; (void)val; (void)len;
+    return net_offline_fail("getsockopt");
+}
+int getsockname_offline(int fd, struct sockaddr *addr, socklen_t *len) {
+    (void)fd; (void)addr; (void)len;
+    return net_offline_fail("getsockname");
+}
+int getpeername_offline(int fd, struct sockaddr *addr, socklen_t *len) {
+    (void)fd; (void)addr; (void)len;
+    return net_offline_fail("getpeername");
+}
+int shutdown_offline(int fd, int how) {
+    (void)fd; (void)how;
+    return net_offline_fail("shutdown");
+}
+struct hostent *gethostbyaddr_offline(const void *addr, socklen_t len, int type) {
+    (void)addr; (void)len; (void)type;
+    (void)net_offline_fail("gethostbyaddr");
+    return NULL;
+}
+struct servent *getservbyname_offline(const char *name, const char *proto) {
+    (void)name; (void)proto;
+    (void)net_offline_fail("getservbyname");
+    return NULL;
+}
+int gethostname_offline(char *name, size_t len) {
+    static const char host[] = "localhost";
+    if (!name || len < sizeof(host)) { errno = ENAMETOOLONG; return -1; }
+    memcpy(name, host, sizeof(host));
+    return 0;
+}
+
+/* newlib's inet_ntop/inet_pton call _vita_net_init (sceNetInit + sceNetCtlInit) and its
+ * pipe() is pipe2 -> socketpair -> socket. Neither is imported by 4.5.2, but dlsym can
+ * still hand them out, so they resolve to pure-C IPv4 / failing versions instead. */
+const char *inet_ntop_offline(int af, const void *src, char *dst, socklen_t size) {
+    const unsigned char *b = (const unsigned char *)src;
+    char tmp[16];
+    if (af != AF_INET || !src || !dst) { errno = EAFNOSUPPORT; return NULL; }
+    int n = snprintf(tmp, sizeof(tmp), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+    if (n < 0 || (socklen_t)n >= size) { errno = ENOSPC; return NULL; }
+    memcpy(dst, tmp, (size_t)n + 1U);
+    return dst;
+}
+
+int inet_pton_offline(int af, const char *src, void *dst) {
+    unsigned char out[4];
+    unsigned part = 0;
+    int octets = 0, digits = 0;
+    if (af != AF_INET) { errno = EAFNOSUPPORT; return -1; }
+    if (!src || !dst) return 0;
+    for (int i = 0; i < 16; i++) {
+        char ch = src[i];
+        if (ch >= '0' && ch <= '9') {
+            part = part * 10U + (unsigned)(ch - '0');
+            if (++digits > 3 || part > 255U) return 0;
+        } else if ((ch == '.' || ch == '\0') && digits > 0 && octets < 4) {
+            out[octets++] = (unsigned char)part;
+            part = 0; digits = 0;
+            if (ch == '\0') break;
+        } else {
+            return 0;
+        }
+    }
+    if (octets != 4) return 0;
+    memcpy(dst, out, sizeof(out));
+    return 1;
+}
+
+int pipe_offline(int fds[2]) {
+    (void)fds;
+    return net_offline_fail("pipe");
 }
 
 int sem_close_soloader(sem_t *sem) { (void)sem; return 0; }
